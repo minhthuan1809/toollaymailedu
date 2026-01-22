@@ -1,4 +1,4 @@
-import type { Browser, Page } from 'puppeteer';
+import type { Browser, Page, HTTPResponse } from 'puppeteer';
 import { ensureBrowser } from './openChrome';
 
 export type ImailEduResult = {
@@ -12,8 +12,6 @@ export type ImailEduResult = {
 const IMAIL_EDU_URL = 'https://imail.edu.vn/';
 const USER_INPUT_SELECTOR = 'input[name="user"]';
 const SUBMIT_INPUT_SELECTOR = 'input[type="submit"][value="Create"], input[type="submit"][value="Tạo"], input[type="submit"]';
-const RANDOM_EMAIL_BUTTON_SELECTOR =
-    'button:has-text("Create a Random Email"), button:has-text("Create Random Email"), button[type="button"]:has-text("Random"), a:has-text("Create a Random Email")';
 
 const generateRandomUser = (min: number, max: number): string => {
     const length = Math.floor(Math.random() * (max - min + 1)) + min;
@@ -193,41 +191,100 @@ export const openImailEduDomainPicker = async (
 };
 
 const clickRandomEmailButton = async (page: Page): Promise<void> => {
-    // Đợi trang load xong trước khi tìm nút
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 }).catch(() => undefined);
-
-    // Tìm nút "Create a Random Email" bằng text content (Puppeteer không có :has-text)
-    const buttons = await page.$$('button, a');
-    let clicked = false;
-
-    for (const btn of buttons) {
-        try {
-            const text = await page.evaluate((el) => el.textContent?.trim().toLowerCase() || '', btn);
-            if (text.includes('random') && text.includes('email')) {
-                const isVisible = await page.evaluate((el) => {
-                    const style = window.getComputedStyle(el);
-                    return style.display !== 'none' && style.visibility !== 'hidden';
-                }, btn);
-
-                if (isVisible) {
-                    await page.evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), btn);
-                    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(300);
-                    await btn.click();
-                    clicked = true;
-                    break;
-                }
-            }
-        } catch {
-            continue;
+    // Tìm và click nút đơn giản như code JavaScript bạn cung cấp
+    const clicked = await page.evaluate(() => {
+        const btn = document.querySelector('input[value="Create a Random Email"]') as HTMLInputElement | null;
+        if (btn) {
+            btn.click();
+            return true;
         }
-    }
+        return false;
+    });
 
     if (!clicked) {
         throw new Error('Không tìm thấy nút "Create a Random Email" trên trang.');
     }
 
-    // Đợi form cập nhật sau khi click (đợi lâu hơn để form render xong)
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+    // Đợi form submit và trang cập nhật
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 }).catch(() => undefined);
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1500);
+};
+
+const clickNewButton = async (page: Page): Promise<void> => {
+    // Tìm và click nút "New" có x-on:click="in_app = true"
+    const clicked = await page.evaluate(() => {
+        const divs = Array.from(document.querySelectorAll('div[x-on\\:click]')) as HTMLElement[];
+        const newButton = divs.find((div) => {
+            const onClick = div.getAttribute('x-on:click');
+            return onClick === 'in_app = true' || onClick?.includes('in_app = true');
+        });
+
+        if (newButton) {
+            // Tìm text "New" bên trong
+            const text = newButton.textContent?.trim().toLowerCase() || '';
+            if (text.includes('new')) {
+                newButton.click();
+                return true;
+            }
+        }
+        return false;
+    });
+
+    if (!clicked) {
+        throw new Error('Không tìm thấy nút "New" trên trang.');
+    }
+
+    // Đợi trang cập nhật
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+};
+
+const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
+    // Lấy email từ div có class cụ thể như bạn cung cấp
+    const email = await page.evaluate(() => {
+        // Tìm div có class chứa các class bạn cung cấp: block appearance-none w-full bg-white text-white py-4 px-5 pr-8 bg-opacity-10 rounded-md cursor-pointer focus:outline-none select-none
+        const divs = Array.from(document.querySelectorAll('div')) as HTMLElement[];
+        const emailDiv = divs.find((div) => {
+            const classList = Array.from(div.classList);
+            // Kiểm tra các class quan trọng
+            const hasKeyClasses =
+                classList.includes('block') &&
+                classList.includes('appearance-none') &&
+                classList.includes('select-none') &&
+                (classList.includes('bg-opacity-10') || classList.some((c) => c.includes('bg-opacity')));
+            
+            if (hasKeyClasses) {
+                const text = div.textContent?.trim() || '';
+                // Kiểm tra xem có chứa email không
+                return text.includes('@') && /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(text);
+            }
+            return false;
+        });
+
+        if (emailDiv) {
+            const text = emailDiv.textContent?.trim() || '';
+            // Extract email từ text
+            const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+            const match = text.match(emailRegex);
+            return match ? match[0] : null;
+        }
+
+        // Fallback: tìm bất kỳ div nào chứa email
+        for (const div of divs) {
+            const text = div.textContent?.trim() || '';
+            if (text.includes('@')) {
+                const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+                const match = text.match(emailRegex);
+                if (match) {
+                    return match[0];
+                }
+            }
+        }
+
+        return null;
+    });
+
+    return email;
 };
 
 const getCurrentDomain = async (page: Page): Promise<string | null> => {
@@ -262,159 +319,58 @@ const getCurrentDomain = async (page: Page): Promise<string | null> => {
 export const createImailEduAddress = async (browserInstance: Browser): Promise<ImailEduResult> => {
     const { page, pageStatus } = await ensureImailEduPage(browserInstance);
 
-    // Đảm bảo trang đã load xong - giảm timeout và bỏ sleep không cần thiết
+    // Đảm bảo trang đã load xong
     await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => undefined);
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
 
-    // Làm đúng như script console: Click vào input domain để mở dropdown
-    await clickDomainInput(page);
-
-    // Đợi 100ms rồi chọn random domain .edu
-    const domainText = await pickRandomEduDomain(page);
-
-    // Đợi form cập nhật sau khi chọn domain - giảm từ 1500ms xuống 300ms
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(300);
-
-    // Bước 3: Chỉ có 1 ô username -> click như người thật rồi gõ
-    // (không dùng visible:true vì đôi khi overlay/animation làm Puppeteer nghĩ là "not visible")
-    const smartWait =
-        (page as unknown as { smartWaitForSelector?: (selector: string, delay?: number) => Promise<void> })
-            .smartWaitForSelector;
-    if (smartWait) {
-        await smartWait(USER_INPUT_SELECTOR, 15000);
-    } else {
-        await page.waitForSelector(USER_INPUT_SELECTOR, { timeout: 15000 });
-    }
-
-    const inputElement = await page.$(USER_INPUT_SELECTOR);
-    if (!inputElement) throw new Error('Không tìm thấy input username.');
-
+    const maxAttempts = 20; // Giới hạn số lần thử để tránh vòng lặp vô hạn
+    let attempts = 0;
+    let email = '';
     let user = '';
-    try {
-        const currentUserValue = await page.evaluate((el) => (el as HTMLInputElement).value || '', inputElement).catch(() => '');
-        if (!currentUserValue || currentUserValue.trim().length === 0) {
-            user = generateRandomUser(15, 20);
-            // Click giống người thật + clear + gõ
-            const simulateMouseClick =
-                (page as unknown as { simulateMouseClick?: (selector: string) => Promise<void> })
-                    .simulateMouseClick;
-            if (simulateMouseClick) {
-                await simulateMouseClick(USER_INPUT_SELECTOR);
+    let domain = '';
+
+    while (attempts < maxAttempts) {
+        attempts += 1;
+
+        // Click vào nút "Create a Random Email"
+        await clickRandomEmailButton(page);
+
+        // Đợi một lúc để email hiển thị
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+
+        // Lấy email từ div hiển thị
+        const currentEmail = await getEmailFromDisplay(page);
+
+        if (currentEmail && currentEmail.includes('.edu')) {
+            // Tìm thấy email có .edu, lấy thông tin
+            email = currentEmail;
+            const emailParts = currentEmail.split('@');
+            if (emailParts.length === 2) {
+                user = emailParts[0];
+                domain = emailParts[1];
             } else {
-                await page.click(USER_INPUT_SELECTOR);
+                // Fallback: parse từ email string
+                const match = currentEmail.match(/([A-Za-z0-9._-]+)@([A-Za-z0-9.-]+)/);
+                if (match) {
+                    user = match[1];
+                    domain = match[2];
+                }
             }
-
-            // Clear nhanh
-            await page.keyboard.down('Control');
-            await page.keyboard.press('A');
-            await page.keyboard.up('Control');
-            await page.keyboard.press('Backspace');
-
-            const simulateTyping =
-                (page as unknown as { simulateTyping?: (selectorOrHandle: unknown, text: string) => Promise<void> })
-                    .simulateTyping;
-            if (simulateTyping) {
-                await simulateTyping(USER_INPUT_SELECTOR, user);
-            } else {
-                await page.type(USER_INPUT_SELECTOR, user);
-            }
-
-            // Đợi typing animation hoàn thành và verify username đã được điền vào input
-            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
-
-            // Verify username đã được điền vào input
-            const verifyValue = await page.evaluate((el) => (el as HTMLInputElement).value || '', inputElement).catch(() => '');
-            if (!verifyValue || verifyValue.trim().length === 0) {
-                // Nếu không có value, thử set trực tiếp
-                await page.evaluate((el, val) => { (el as HTMLInputElement).value = val; }, inputElement, user);
-                await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(200);
-            }
-            user = verifyValue.trim() || user;
-        } else {
-            user = currentUserValue.trim();
-        }
-    } catch {
-        // Nếu không lấy được, tạo user mới và dùng simulateTyping
-        user = generateRandomUser(15, 20);
-        const simulateMouseClick =
-            (page as unknown as { simulateMouseClick?: (selector: string) => Promise<void> })
-                .simulateMouseClick;
-        if (simulateMouseClick) {
-            await simulateMouseClick(USER_INPUT_SELECTOR).catch(() => undefined);
-        } else {
-            await page.click(USER_INPUT_SELECTOR).catch(() => undefined);
+            break; // Thoát khỏi vòng lặp
         }
 
-        const simulateTyping =
-            (page as unknown as { simulateTyping?: (selectorOrHandle: unknown, text: string) => Promise<void> })
-                .simulateTyping;
-        if (simulateTyping) {
-            await simulateTyping(USER_INPUT_SELECTOR, user).catch(() => undefined);
-        } else {
-            await page.type(USER_INPUT_SELECTOR, user).catch(() => undefined);
-        }
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
-
-        // Verify và set trực tiếp nếu cần
-        const verifyValue = await page.evaluate((el) => (el as HTMLInputElement).value || '', inputElement).catch(() => '');
-        if (!verifyValue || verifyValue.trim().length === 0) {
-            await page.evaluate((el, val) => { (el as HTMLInputElement).value = val; }, inputElement, user);
-            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(200);
+        // Nếu không có .edu, click nút "New" rồi thử lại
+        if (attempts < maxAttempts) {
+            await clickNewButton(page);
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
         }
     }
 
-    // Đảm bảo username đã được điền trước khi submit
-    const finalCheck = await page.evaluate((el) => (el as HTMLInputElement).value || '', inputElement).catch(() => '');
-    if (!finalCheck || finalCheck.trim().length === 0) {
-        throw new Error('Username chưa được điền vào input trước khi submit.');
+    if (!email || !user || !domain) {
+        throw new Error(
+            `Không thể tạo email có .edu sau ${attempts} lần thử. Email cuối cùng: ${email || 'không tìm thấy'}`
+        );
     }
-
-    // Bước 4: Submit form - click đúng input[type=submit][value=Create|Tạo]
-    // Không dùng visible:true vì đôi khi CSS/overlay làm Puppeteer fail dù element có trên DOM.
-    await page.waitForSelector('input[type="submit"]', { timeout: 15000 });
-
-    const clickedSubmit = await page.evaluate(() => {
-        const submits = Array.from(document.querySelectorAll('input[type="submit"]')) as HTMLInputElement[];
-        const target =
-            submits.find((s) => (s.value ?? '').trim().toLowerCase() === 'create') ??
-            submits.find((s) => (s.value ?? '').trim().toLowerCase() === 'tạo') ??
-            submits[0];
-        if (!target) return false;
-        target.click();
-        return true;
-    });
-
-    if (!clickedSubmit) {
-        // Fallback: thử click bằng undetected-browser cursor nếu có
-        const simulateMouseClick =
-            (page as unknown as { simulateMouseClick?: (selector: string) => Promise<void> }).simulateMouseClick;
-        if (simulateMouseClick) {
-            await simulateMouseClick('input[type="submit"]');
-        } else {
-            await page.click('input[type="submit"]');
-        }
-    }
-
-    // Đợi form submit - giảm từ 1500ms xuống 500ms
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
-
-    // Lấy thông tin email cuối cùng từ trang (có thể đã thay đổi sau khi submit)
-    try {
-        const finalUserInput = await page.$(USER_INPUT_SELECTOR);
-        if (finalUserInput) {
-            const finalUser = await page.evaluate((el) => (el as HTMLInputElement).value || '', finalUserInput).catch(() => '');
-            if (finalUser && finalUser.trim().length > 0) {
-                user = finalUser.trim();
-            }
-        }
-    } catch {
-        // Giữ user hiện tại
-    }
-
-    // cố gắng rút domain dạng @xxx từ text domain đã chọn
-    const domainMatch = domainText.match(/[A-Za-z0-9.-]+\.edu[^\s]*/);
-    const domain = domainMatch ? domainMatch[0] : domainText.replace(/^@/, '');
-
-    const email = `${user}@${domain.replace(/^@/, '')}`;
 
     return {
         url: IMAIL_EDU_URL,
@@ -425,3 +381,216 @@ export const createImailEduAddress = async (browserInstance: Browser): Promise<I
     };
 };
 
+export const readImailEduInbox = async (
+    browserInstance: Browser,
+    expectedEmail?: string
+): Promise<{ email: string; inbox: unknown; pageStatus: ImailEduResult['pageStatus'] }> => {
+    // Tìm page đang mở imail.edu.vn (có thể ở trang chủ hoặc mailbox)
+    const pages = await browserInstance.pages();
+    let page: Page | null = null;
+
+    for (const p of pages) {
+        try {
+            const url = p.url();
+            if (url.includes('imail.edu.vn')) {
+                page = p;
+                await p.bringToFront();
+                break;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    // Nếu không tìm thấy, mở trang mới
+    if (!page) {
+        const { page: newPage } = await ensureImailEduPage(browserInstance);
+        page = newPage;
+    }
+
+    // Đảm bảo đang ở trang mailbox hoặc trang có email
+    const currentUrl = page.url();
+    if (!currentUrl.includes('/mailbox')) {
+        // Navigate đến mailbox nếu chưa ở đó
+        await page.goto('https://imail.edu.vn/mailbox', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+    } else {
+        // Refresh trang mailbox
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+    }
+
+    // Lấy email hiện tại từ trang
+    const currentEmail = await getEmailFromDisplay(page);
+    if (!currentEmail) {
+        throw new Error('Không tìm thấy địa chỉ email hiện tại trên trang imailEdu.');
+    }
+
+    // Kiểm tra expectedEmail nếu có
+    if (expectedEmail && expectedEmail.trim().length > 0 && expectedEmail !== currentEmail) {
+        // vẫn tiếp tục đọc, nhưng ghi nhận mismatch nếu cần xử lý phía client
+    }
+
+    const targetUrl = 'https://imail.edu.vn/livewire/message/frontend.app';
+    let inboxData: unknown = null;
+
+    // Thử bắt network response trước (ưu tiên vì Livewire có thể cần request body cụ thể)
+    try {
+        // Setup response listener TRƯỚC khi trigger action
+        const responsePromise = page.waitForResponse(
+            (res: HTTPResponse) => {
+                const url = res.url();
+                return url.includes('livewire/message/frontend.app') || url.includes('livewire/message');
+            },
+            { timeout: 15000 }
+        ).catch(() => null);
+
+        // Đợi một chút để đảm bảo listener đã được setup
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
+
+        // Trigger refresh hoặc action để gọi API Livewire
+        await page.evaluate(() => {
+            // Tìm và click refresh button nếu có
+            const buttons = Array.from(document.querySelectorAll('button, div[x-on\\:click], div[onclick]')) as HTMLElement[];
+            const refreshBtn = buttons.find((btn) => {
+                const text = btn.textContent?.toLowerCase() || '';
+                const onClick = btn.getAttribute('x-on:click') || btn.getAttribute('onclick') || '';
+                return text.includes('refresh') || onClick.includes('refresh');
+            });
+
+            if (refreshBtn) {
+                refreshBtn.click();
+            } else {
+                // Hoặc trigger bằng cách dispatch event
+                window.dispatchEvent(new Event('scroll'));
+                // Hoặc trigger Livewire update
+                if (typeof (window as unknown as { Livewire?: { emit: (event: string) => void } }).Livewire !== 'undefined') {
+                    (window as unknown as { Livewire: { emit: (event: string) => void } }).Livewire.emit('refresh');
+                }
+            }
+        });
+
+        // Đợi response
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+
+        const response = await responsePromise;
+
+        if (response) {
+            try {
+                inboxData = await response.json();
+            } catch {
+                const text = await response.text();
+                try {
+                    inboxData = JSON.parse(text);
+                } catch {
+                    inboxData = text;
+                }
+            }
+        }
+    } catch {
+        // Ignore và thử fetch trực tiếp
+    }
+
+    // Nếu không bắt được network response, thử fetch trực tiếp từ page context
+    if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
+        try {
+            inboxData = await page.evaluate(async (url: string) => {
+                try {
+                    // Lấy Livewire component data từ DOM nếu có
+                    const livewireData = document.querySelector('[wire\\:id]');
+                    let body: unknown = {};
+                    
+                    if (livewireData) {
+                        const wireId = livewireData.getAttribute('wire:id');
+                        const fingerprint = (window as unknown as { Livewire?: { find: (id: string) => unknown } }).Livewire?.find(wireId || '');
+                        if (fingerprint) {
+                            body = { fingerprint, serverMemo: {} };
+                        }
+                    }
+
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        cache: 'no-store',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'Content-Type': 'application/json',
+                            'X-Livewire': 'true',
+                        },
+                        body: JSON.stringify(body),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        return data;
+                    }
+                    return null;
+                } catch (err) {
+                    console.error('Fetch error:', err);
+                    return null;
+                }
+            }, targetUrl);
+        } catch {
+            // Ignore
+        }
+    }
+
+    // Nếu fetch trực tiếp không thành công, thử bắt network response
+    if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
+        try {
+            // Setup response listener TRƯỚC khi trigger action
+            const responsePromise = page.waitForResponse(
+                (res: HTTPResponse) => {
+                    const url = res.url();
+                    return url.includes('livewire/message/frontend.app') || url.startsWith(targetUrl);
+                },
+                { timeout: 10000 }
+            ).catch(() => null);
+
+            // Đợi một chút để đảm bảo listener đã được setup
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(300);
+
+            // Trigger refresh hoặc action để gọi API
+            await page.evaluate(() => {
+                // Thử trigger Livewire update bằng cách click vào refresh button hoặc scroll
+                const refreshBtn = document.querySelector('[onclick*="refresh"], button:has-text("Refresh"), [aria-label*="refresh" i]') as HTMLElement | null;
+                if (refreshBtn) {
+                    refreshBtn.click();
+                } else {
+                    // Hoặc trigger bằng cách scroll
+                    window.dispatchEvent(new Event('scroll'));
+                }
+            });
+
+            // Đợi auto-refresh hoặc response
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+
+            // Đợi response
+            const response = await responsePromise;
+
+            if (response) {
+                try {
+                    inboxData = await response.json();
+                } catch {
+                    const text = await response.text();
+                    try {
+                        inboxData = JSON.parse(text);
+                    } catch {
+                        inboxData = text;
+                    }
+                }
+            }
+        } catch (error) {
+            // Ignore errors và fallback
+        }
+    }
+
+    // Fallback: nếu không bắt được network, trả về empty
+    if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
+        inboxData = { messages: [], fallback: true };
+    }
+
+    // Xác định pageStatus
+    const pageStatus: ImailEduResult['pageStatus'] = currentUrl.includes('imail.edu.vn') ? 'already-open' : 'opened';
+
+    return { email: currentEmail, inbox: inboxData, pageStatus };
+};

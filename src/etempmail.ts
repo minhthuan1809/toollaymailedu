@@ -249,14 +249,16 @@ export const readEtempmailInbox = async (
 ): Promise<{ email: string; inbox: unknown; pageStatus: EtempmailResult['pageStatus'] }> => {
     const { page, pageStatus } = await ensureEtempmailPage(browserInstance);
 
-    // Wait briefly for inbox to render (and ensure we are on the inbox page)
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
+    // Wait for page to be fully loaded and inbox to render
+    // Đợi một chút để trang render và có thể đã gọi API getInbox
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
 
     const currentEmail = await extractEmailFromPage(page);
     if (!currentEmail) {
         throw new Error('Không tìm thấy địa chỉ email hiện tại trên trang eTempMail.');
     }
 
+    // Nếu có expectedEmail và khác với currentEmail, có thể cần navigate đến email đó
     if (expectedEmail && expectedEmail.trim().length > 0 && expectedEmail !== currentEmail) {
         // vẫn tiếp tục đọc, nhưng ghi nhận mismatch nếu cần xử lý phía client
     }
@@ -264,28 +266,103 @@ export const readEtempmailInbox = async (
     const targetUrl = 'https://etempmail.com/getInbox';
     let inboxData: unknown = null;
 
+    // Thử fetch trực tiếp từ page context trước (giữ cookie/session)
     try {
-        const responsePromise = page.waitForResponse(
-            (res: HTTPResponse) => res.url().startsWith(targetUrl),
-            { timeout: 8000 }
-        );
-
-        // cố gắng kích hoạt lại call API trên trang (reload hoặc fetch)
-        await page.evaluate((url: string) => {
-            // ưu tiên dùng fetch trong context trang để giữ cookie/session
-            void fetch(url, { cache: 'no-store' }).catch(() => undefined);
+        inboxData = await page.evaluate(async (url: string) => {
+            try {
+                const res = await fetch(url, {
+                    cache: 'no-store',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json, text/plain, */*',
+                    }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    return data;
+                }
+                return null;
+            } catch (err) {
+                console.error('Fetch error:', err);
+                return null;
+            }
         }, targetUrl);
-
-        const response = await responsePromise;
-        try {
-            inboxData = await response.json();
-        } catch {
-            inboxData = await response.text();
-        }
     } catch {
-        // fallback: nếu không bắt được network, thử scrape HTML như cũ
-        const messages = await scrapeMessages(page);
-        inboxData = { fallbackMessages: messages };
+        // Ignore và thử cách khác
+    }
+
+    // Nếu fetch trực tiếp không thành công, thử bắt network response
+    if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
+        try {
+            // Setup response listener TRƯỚC khi trigger action
+            const responsePromise = page.waitForResponse(
+                (res: HTTPResponse) => {
+                    const url = res.url();
+                    return url.includes('getInbox') || url.startsWith(targetUrl);
+                },
+                { timeout: 10000 }
+            ).catch(() => null);
+
+            // Đợi một chút để đảm bảo listener đã được setup
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(300);
+
+            // Trigger fetch trong context trang để kích hoạt API call
+            await page.evaluate((url: string) => {
+                void fetch(url, { 
+                    cache: 'no-store',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json, text/plain, */*',
+                    }
+                }).catch(() => undefined);
+            }, targetUrl);
+
+            // Đợi auto-refresh của trang (trang có auto-refresh mỗi 5 giây)
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1500);
+
+            // Thử scroll vào inbox area để trigger lazy load nếu có
+            try {
+                await page.evaluate(() => {
+                    const inboxArea = document.querySelector('[id*="inbox"], [class*="inbox"], [id*="mail"], table, .list-group');
+                    if (inboxArea) {
+                        inboxArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                });
+                await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
+            } catch {
+                // Ignore nếu không tìm thấy element
+            }
+
+            // Đợi response
+            const response = await responsePromise;
+            
+            if (response) {
+                try {
+                    inboxData = await response.json();
+                } catch {
+                    const text = await response.text();
+                    try {
+                        inboxData = JSON.parse(text);
+                    } catch {
+                        inboxData = text;
+                    }
+                }
+            }
+        } catch (error) {
+            // Ignore errors và fallback
+        }
+    }
+
+    // Fallback: nếu không bắt được network, thử scrape HTML
+    if (!inboxData || (typeof inboxData === 'object' && 'fallbackMessages' in inboxData === false && Object.keys(inboxData).length === 0)) {
+        try {
+            const messages = await scrapeMessages(page);
+            inboxData = inboxData && typeof inboxData === 'object' 
+                ? { ...inboxData, fallbackMessages: messages }
+                : { fallbackMessages: messages };
+        } catch {
+            inboxData = inboxData || { fallbackMessages: [] };
+        }
     }
 
     return { email: currentEmail, inbox: inboxData, pageStatus };
