@@ -29,9 +29,15 @@ export const ensureBrowser = async (
     const width = 1200;
     const height = 800;
 
+    // Thêm flags cho Linux để tránh sandbox issues
+    const args = [`--window-size=${width},${height}`];
+    if (process.platform !== 'win32') {
+        args.push('--no-sandbox', '--disable-setuid-sandbox');
+    }
+
     browser = await puppeteer.launch({
         headless: options.headless ?? false,
-        args: [`--window-size=${width},${height}`],
+        args,
         defaultViewport: { width, height }
     });
 
@@ -71,9 +77,15 @@ export const createNewBrowser = async (
     const width = 1200;
     const height = 800;
 
+    // Thêm flags cho Linux để tránh sandbox issues
+    const args = [`--window-size=${width},${height}`];
+    if (process.platform !== 'win32') {
+        args.push('--no-sandbox', '--disable-setuid-sandbox');
+    }
+
     const newBrowser = await puppeteer.launch({
         headless: options.headless ?? false,
-        args: [`--window-size=${width},${height}`],
+        args,
         defaultViewport: { width, height }
     });
 
