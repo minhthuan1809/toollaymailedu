@@ -1,111 +1,286 @@
-# Hướng Dẫn Dừng Các Loại API
+# API Documentation
 
-Tài liệu này hướng dẫn cách dừng server API và các browser instances đang chạy.
-
-## 📋 Mục Lục
-
-1. [Dừng Server API](#1-dừng-server-api)
-2. [Dừng Browser Instance Theo Email](#2-dừng-browser-instance-theo-email)
-3. [Dừng Tất Cả Browser Instances](#3-dừng-tất-cả-browser-instances)
-4. [Các Phương Pháp Dừng Server](#4-các-phương-pháp-dừng-server)
+Base URL: `http://localhost:5678` (hoặc port được cấu hình trong biến môi trường `PORT`)
 
 ---
 
-## 1. Dừng Server API
+## 1. Health Check
 
-Server API chạy trên port **5678** (hoặc port được cấu hình trong biến môi trường `PORT`).
+Kiểm tra server có đang chạy không.
 
-### 1.1. Dừng Server Khi Chạy Trong Terminal
+**Endpoint:** `GET /health`
 
-#### Windows (CMD/PowerShell)
-```bash
-# Nhấn Ctrl + C trong terminal đang chạy server
+**JavaScript Example:**
+```javascript
+async function checkHealth() {
+    const response = await fetch('http://localhost:5678/health');
+    const data = await response.json();
+    console.log(data);
+    // Output: { status: 'ok' }
+}
+
+checkHealth();
 ```
-
-#### Linux/macOS
-```bash
-# Nhấn Ctrl + C trong terminal đang chạy server
-```
-
-### 1.2. Dừng Server Bằng Process ID (PID)
-
-#### Tìm Process ID
-```bash
-# Windows (PowerShell)
-Get-Process -Name node | Where-Object {$_.MainWindowTitle -like "*5678*"}
-
-# Linux/macOS
-lsof -i :5678
-# hoặc
-netstat -tulpn | grep 5678
-```
-
-#### Dừng Process
-```bash
-# Windows
-taskkill /PID <PID> /F
-
-# Linux/macOS
-kill <PID>
-# hoặc force kill
-kill -9 <PID>
-```
-
-### 1.3. Dừng Server Bằng Port
-
-#### Windows
-```bash
-# Tìm và dừng process đang dùng port 5678
-netstat -ano | findstr :5678
-taskkill /PID <PID> /F
-```
-
-#### Linux/macOS
-```bash
-# Tìm và dừng process đang dùng port 5678
-lsof -ti:5678 | xargs kill
-# hoặc force kill
-lsof -ti:5678 | xargs kill -9
-```
-
-### 1.4. Dừng Server Tự Động (Graceful Shutdown)
-
-Server tự động dừng khi nhận tín hiệu:
-- **SIGINT**: Khi nhấn `Ctrl + C`
-- **SIGTERM**: Khi process manager gửi tín hiệu dừng
-
-Khi nhận tín hiệu, server sẽ:
-1. Đóng tất cả kết nối HTTP
-2. Đóng tất cả browser instances
-3. Thoát process
 
 ---
 
-## 2. Dừng Browser Instance Theo Email
+## 2. Tạo Email Mới
 
-Bạn có thể đóng browser instance của một email cụ thể mà không cần dừng toàn bộ server.
+Tạo một email tạm mới (etempmail hoặc imailedu).
 
-### 2.1. Sử Dụng API Endpoint
+**Endpoint:** `POST /api/gmail/new`
 
-#### GET Request
-```bash
-curl -X GET "http://localhost:5678/api/gmail/close/email@example.com"
+**Request Body:**
+```json
+[
+    {
+        "type": "etempmail" | "imailedu",
+        "other": ["keyword1", "keyword2"]  // Optional: danh sách từ khóa cần loại bỏ
+    }
+]
 ```
 
-#### POST Request
-```bash
-curl -X POST "http://localhost:5678/api/gmail/close/email@example.com"
+**JavaScript Example:**
+
+### Tạo Email Etempmail
+```javascript
+async function createEtempmail() {
+    const response = await fetch('http://localhost:5678/api/gmail/new', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([
+            {
+                type: 'etempmail'
+            }
+        ])
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    // Output: { status: 'ok', result: { url: '...', email: '...', ... } }
+    
+    return data.result;
+}
+
+createEtempmail();
 ```
 
-#### Với Email Có Ký Tự Đặc Biệt (URL Encoding)
-```bash
-# Email: user@domain.edu.vn
-curl -X GET "http://localhost:5678/api/gmail/close/user%40domain.edu.vn"
+### Tạo Email ImailEdu
+```javascript
+async function createImailEdu() {
+    const response = await fetch('http://localhost:5678/api/gmail/new', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([
+            {
+                type: 'imailedu'
+            }
+        ])
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data.result;
+}
+
+createImailEdu();
 ```
 
-### 2.2. Response
+### Tạo Email ImailEdu Với Loại Bỏ Từ Khóa
+```javascript
+async function createImailEduWithExclude() {
+    const response = await fetch('http://localhost:5678/api/gmail/new', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([
+            {
+                type: 'imailedu',
+                other: ['spam', 'test', 'demo']  // Email chứa các từ này sẽ bị bỏ qua
+            }
+        ])
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data.result;
+}
 
-#### Thành Công (200 OK)
+createImailEduWithExclude();
+```
+
+**Response Success:**
+```json
+{
+    "status": "ok",
+    "result": {
+        "url": "https://...",
+        "pageStatus": "opened",
+        "domain": "example.edu.vn",
+        "user": "randomuser123",
+        "email": "randomuser123@example.edu.vn"
+    }
+}
+```
+
+**Response Error:**
+```json
+{
+    "status": "error",
+    "message": "Error message here"
+}
+```
+
+---
+
+## 3. Đọc Inbox
+
+Đọc hộp thư đến của email đã tạo.
+
+**Endpoint:** `POST /api/gmail/read`
+
+**Request Body:**
+```json
+[
+    {
+        "type": "etempmail" | "imailedu",
+        "email": "your-email@example.com"
+    }
+]
+```
+
+**JavaScript Example:**
+
+### Đọc Inbox Etempmail
+```javascript
+async function readEtempmailInbox(email) {
+    const response = await fetch('http://localhost:5678/api/gmail/read', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([
+            {
+                type: 'etempmail',
+                email: email
+            }
+        ])
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data.result;
+}
+
+// Sử dụng
+const email = 'user@etempmail.com';
+readEtempmailInbox(email);
+```
+
+### Đọc Inbox ImailEdu
+```javascript
+async function readImailEduInbox(email) {
+    const response = await fetch('http://localhost:5678/api/gmail/read', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify([
+            {
+                type: 'imailedu',
+                email: email
+            }
+        ])
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data.result;
+}
+
+// Sử dụng
+const email = 'user@domain.edu.vn';
+readImailEduInbox(email);
+```
+
+**Response Success:**
+```json
+{
+    "status": "ok",
+    "result": {
+        "email": "user@example.com",
+        "inbox": {
+            "messages": [...],
+            ...
+        },
+        "pageStatus": "already-open"
+    }
+}
+```
+
+**Response Error:**
+```json
+{
+    "status": "error",
+    "message": "Error message here"
+}
+```
+
+---
+
+## 4. Đóng Browser Của Email
+
+Đóng cửa sổ browser của một email cụ thể.
+
+**Endpoint:** `GET /api/gmail/close/:email` hoặc `POST /api/gmail/close/:email`
+
+**JavaScript Example:**
+
+### Dùng GET Request
+```javascript
+async function closeEmail(email) {
+    // Encode email để tránh lỗi với ký tự đặc biệt như @
+    const encodedEmail = encodeURIComponent(email);
+    
+    const response = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+        method: 'GET'
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data;
+}
+
+// Sử dụng
+const email = 'user@domain.edu.vn';
+closeEmail(email);
+```
+
+### Dùng POST Request
+```javascript
+async function closeEmailPost(email) {
+    const encodedEmail = encodeURIComponent(email);
+    
+    const response = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+        method: 'POST'
+    });
+    
+    const data = await response.json();
+    console.log(data);
+    return data;
+}
+
+// Sử dụng
+const email = 'user@domain.edu.vn';
+closeEmailPost(email);
+```
+
+**Response Success (200 OK):**
 ```json
 {
     "status": "ok",
@@ -113,7 +288,7 @@ curl -X GET "http://localhost:5678/api/gmail/close/user%40domain.edu.vn"
 }
 ```
 
-#### Không Tìm Thấy (404 Not Found)
+**Response Error (404 Not Found):**
 ```json
 {
     "status": "error",
@@ -121,231 +296,89 @@ curl -X GET "http://localhost:5678/api/gmail/close/user%40domain.edu.vn"
 }
 ```
 
-### 2.3. Ví Dụ Sử Dụng
-
-#### JavaScript/TypeScript
-```typescript
-const email = 'user@domain.edu.vn';
-const encodedEmail = encodeURIComponent(email);
-const response = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`);
-const result = await response.json();
-console.log(result);
-```
-
-#### Python
-```python
-import requests
-import urllib.parse
-
-email = 'user@domain.edu.vn'
-encoded_email = urllib.parse.quote(email)
-response = requests.get(f'http://localhost:5678/api/gmail/close/{encoded_email}')
-print(response.json())
-```
-
-#### cURL
-```bash
-# Email đơn giản
-curl http://localhost:5678/api/gmail/close/user@domain.edu.vn
-
-# Email có ký tự đặc biệt
-curl "http://localhost:5678/api/gmail/close/user%40domain.edu.vn"
-```
-
 ---
 
-## 3. Dừng Tất Cả Browser Instances
+## Ví Dụ Hoàn Chỉnh
 
-### 3.1. Dừng Server (Tự Động Đóng Tất Cả)
-
-Khi dừng server bằng `Ctrl + C` hoặc `SIGTERM`, tất cả browser instances sẽ tự động được đóng.
-
-### 3.2. Kiểm Tra Browser Instances Đang Chạy
-
-#### Windows
-```powershell
-# Liệt kê tất cả Chrome/Chromium processes
-Get-Process | Where-Object {$_.ProcessName -like "*chrome*" -or $_.ProcessName -like "*chromium*"}
-```
-
-#### Linux/macOS
-```bash
-# Liệt kê tất cả Chrome/Chromium processes
-ps aux | grep -i chrome
-# hoặc
-pgrep -f chrome
-```
-
-### 3.3. Dừng Tất Cả Chrome Processes (Thủ Công)
-
-⚠️ **Cảnh báo**: Cách này sẽ đóng TẤT CẢ Chrome/Chromium processes, không chỉ của ứng dụng này.
-
-#### Windows
-```powershell
-# Dừng tất cả Chrome processes
-Get-Process chrome | Stop-Process -Force
-```
-
-#### Linux/macOS
-```bash
-# Dừng tất cả Chrome processes
-pkill -f chrome
-# hoặc force kill
-pkill -9 -f chrome
-```
-
----
-
-## 4. Các Phương Pháp Dừng Server
-
-### 4.1. Phương Pháp 1: Graceful Shutdown (Khuyến Nghị)
-
-**Cách làm**: Nhấn `Ctrl + C` trong terminal
-
-**Ưu điểm**:
-- Server đóng kết nối một cách an toàn
-- Tất cả browser instances được đóng đúng cách
-- Không mất dữ liệu
-
-**Khi nào dùng**: Khi server đang chạy trong terminal và bạn có quyền truy cập
-
-### 4.2. Phương Pháp 2: Process Signal
-
-**Cách làm**: Gửi tín hiệu SIGTERM hoặc SIGINT
-
-```bash
-# Linux/macOS
-kill -TERM <PID>
-# hoặc
-kill -INT <PID>
-```
-
-**Ưu điểm**: Tương tự graceful shutdown
-
-**Khi nào dùng**: Khi server chạy như background process
-
-### 4.3. Phương Pháp 3: Force Kill
-
-**Cách làm**: Dùng `kill -9` hoặc `taskkill /F`
-
-```bash
-# Linux/macOS
-kill -9 <PID>
-
-# Windows
-taskkill /PID <PID> /F
-```
-
-**Nhược điểm**:
-- Server dừng đột ngột
-- Browser instances có thể không được đóng đúng cách
-- Có thể để lại zombie processes
-
-**Khi nào dùng**: Chỉ khi server bị treo và không phản hồi
-
-### 4.4. Phương Pháp 4: Dừng Theo Port
-
-**Cách làm**: Tìm và dừng process đang dùng port
-
-```bash
-# Linux/macOS
-lsof -ti:5678 | xargs kill
-
-# Windows (PowerShell)
-$process = Get-NetTCPConnection -LocalPort 5678 | Select-Object -ExpandProperty OwningProcess
-Stop-Process -Id $process -Force
-```
-
----
-
-## 5. Kiểm Tra Trạng Thái Server
-
-### 5.1. Health Check Endpoint
-
-```bash
-curl http://localhost:5678/health
-```
-
-**Response**:
-```json
-{
-    "status": "ok"
+### Tạo Email, Đọc Inbox, Rồi Đóng
+```javascript
+async function fullExample() {
+    try {
+        // 1. Tạo email mới
+        console.log('Bước 1: Tạo email mới...');
+        const createResponse = await fetch('http://localhost:5678/api/gmail/new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ type: 'imailedu' }])
+        });
+        const createData = await createResponse.json();
+        
+        if (createData.status !== 'ok') {
+            throw new Error(createData.message);
+        }
+        
+        const email = createData.result.email;
+        console.log('Email đã tạo:', email);
+        
+        // 2. Đợi một chút rồi đọc inbox
+        console.log('Bước 2: Đợi 3 giây rồi đọc inbox...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        const readResponse = await fetch('http://localhost:5678/api/gmail/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ type: 'imailedu', email: email }])
+        });
+        const readData = await readResponse.json();
+        
+        if (readData.status === 'ok') {
+            console.log('Inbox:', readData.result.inbox);
+        }
+        
+        // 3. Đóng browser của email
+        console.log('Bước 3: Đóng browser...');
+        const encodedEmail = encodeURIComponent(email);
+        const closeResponse = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+            method: 'GET'
+        });
+        const closeData = await closeResponse.json();
+        console.log(closeData.message);
+        
+    } catch (error) {
+        console.error('Lỗi:', error.message);
+    }
 }
-```
 
-### 5.2. Kiểm Tra Port Đang Lắng Nghe
-
-#### Windows
-```bash
-netstat -ano | findstr :5678
-```
-
-#### Linux/macOS
-```bash
-lsof -i :5678
-# hoặc
-netstat -tulpn | grep 5678
+fullExample();
 ```
 
 ---
 
-## 6. Troubleshooting
+## Error Handling
 
-### 6.1. Server Không Dừng Được
+```javascript
+async function callAPIWithErrorHandling() {
+    try {
+        const response = await fetch('http://localhost:5678/api/gmail/new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ type: 'imailedu' }])
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'error') {
+            console.error('API Error:', data.message);
+            return null;
+        }
+        
+        return data.result;
+        
+    } catch (error) {
+        console.error('Network Error:', error.message);
+        return null;
+    }
+}
 
-**Nguyên nhân**: Process bị treo hoặc có zombie processes
-
-**Giải pháp**:
-1. Thử force kill: `kill -9 <PID>` (Linux) hoặc `taskkill /PID <PID> /F` (Windows)
-2. Kiểm tra và dừng tất cả Chrome processes
-3. Khởi động lại máy nếu cần
-
-### 6.2. Browser Instances Không Đóng
-
-**Nguyên nhân**: Browser instance bị treo
-
-**Giải pháp**:
-1. Dừng server để đóng tất cả browsers
-2. Dừng Chrome processes thủ công
-3. Kiểm tra task manager/process list
-
-### 6.3. Port Vẫn Bị Chiếm Dụng
-
-**Nguyên nhân**: Process chưa được dừng hoàn toàn
-
-**Giải pháp**:
-```bash
-# Linux/macOS
-lsof -ti:5678 | xargs kill -9
-
-# Windows
-netstat -ano | findstr :5678
-taskkill /PID <PID> /F
+callAPIWithErrorHandling();
 ```
-
----
-
-## 7. Best Practices
-
-1. ✅ **Luôn dùng Graceful Shutdown**: Nhấn `Ctrl + C` hoặc gửi SIGTERM
-2. ✅ **Đóng browser instances trước khi dừng server**: Dùng API `/api/gmail/close/:email`
-3. ✅ **Kiểm tra health endpoint**: Trước khi dừng, kiểm tra server còn hoạt động không
-4. ✅ **Logging**: Theo dõi logs để biết server đã dừng đúng cách
-5. ⚠️ **Tránh force kill**: Chỉ dùng khi thực sự cần thiết
-
----
-
-## 8. Tóm Tắt Nhanh
-
-| Mục Đích | Cách Làm |
-|----------|----------|
-| Dừng server trong terminal | Nhấn `Ctrl + C` |
-| Dừng browser của email cụ thể | `GET/POST /api/gmail/close/:email` |
-| Dừng server bằng PID | `kill <PID>` (Linux) hoặc `taskkill /PID <PID> /F` (Windows) |
-| Dừng server bằng port | `lsof -ti:5678 \| xargs kill` (Linux) |
-| Force kill server | `kill -9 <PID>` (Linux) hoặc `taskkill /PID <PID> /F` (Windows) |
-| Kiểm tra server còn chạy | `curl http://localhost:5678/health` |
-
----
-
-**Lưu ý**: Port mặc định là **5678**, có thể thay đổi bằng biến môi trường `PORT`.
