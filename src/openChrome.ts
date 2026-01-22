@@ -63,3 +63,26 @@ export const closeBrowser = async (): Promise<void> => {
 };
 
 export const getBrowserIfAny = (): Browser | null => browser;
+
+// Tạo browser instance mới (mở cửa sổ Chrome mới)
+export const createNewBrowser = async (
+    options: EnsureBrowserOptions = {}
+): Promise<Browser> => {
+    const width = 1200;
+    const height = 800;
+
+    const newBrowser = await puppeteer.launch({
+        headless: options.headless ?? false,
+        args: [`--window-size=${width},${height}`],
+        defaultViewport: { width, height }
+    });
+
+    const newUndetected = new UndetectableBrowser(newBrowser);
+    await newUndetected.getBrowser();
+
+    // Extend các page đang mở
+    const pages = await newBrowser.pages();
+    pages.forEach((p: Page) => newUndetected?.extendPage(p));
+
+    return newBrowser;
+};

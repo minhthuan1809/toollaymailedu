@@ -1,5 +1,6 @@
 import type { Browser, Page, HTTPResponse } from 'puppeteer';
 import { ensureBrowser } from './openChrome';
+import { registerEmailBrowser, getPageByEmail, getBrowserByEmail } from './emailPageMap';
 
 export type ImailEduResult = {
     url: string;
@@ -150,8 +151,18 @@ const fillUserAndSubmit = async (page: Page): Promise<{ user: string }> => {
 };
 
 export const ensureImailEduPage = async (
-    browserInstance: Browser
+    browserInstance: Browser,
+    forceNew = false
 ): Promise<{ page: Page; pageStatus: ImailEduResult['pageStatus'] }> => {
+    // Nếu forceNew = true, luôn tạo page mới (dùng khi tạo email mới)
+    if (forceNew) {
+        const page = await browserInstance.newPage();
+        await page.setViewport({ width: 1200, height: 800 });
+        await (page as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 1000);
+        return { page, pageStatus: 'opened' };
+    }
+
+    // Nếu không forceNew, reuse page nếu có (dùng khi đọc inbox)
     const existing = await findOpenPageByExactUrl(browserInstance, IMAIL_EDU_URL);
     if (existing) {
         await existing.bringToFront();
@@ -269,7 +280,20 @@ const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
             return match ? match[0] : null;
         }
 
-        // Fallback: tìm bất kỳ div nào chứa email
+        // Fallback 1: tìm trong input có value chứa email
+        const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+        for (const input of inputs) {
+            const value = input.value?.trim() || '';
+            if (value.includes('@')) {
+                const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+                const match = value.match(emailRegex);
+                if (match) {
+                    return match[0];
+                }
+            }
+        }
+
+        // Fallback 2: tìm bất kỳ div nào chứa email
         for (const div of divs) {
             const text = div.textContent?.trim() || '';
             if (text.includes('@')) {
@@ -278,6 +302,16 @@ const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
                 if (match) {
                     return match[0];
                 }
+            }
+        }
+
+        // Fallback 3: tìm trong toàn bộ body text
+        const bodyText = document.body.innerText || '';
+        if (bodyText.includes('@')) {
+            const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+            const match = bodyText.match(emailRegex);
+            if (match) {
+                return match[0];
             }
         }
 
@@ -316,8 +350,12 @@ const getCurrentDomain = async (page: Page): Promise<string | null> => {
     return null;
 };
 
-export const createImailEduAddress = async (browserInstance: Browser): Promise<ImailEduResult> => {
-    const { page, pageStatus } = await ensureImailEduPage(browserInstance);
+export const createImailEduAddress = async (
+    browserInstance: Browser,
+    excludeKeywords: string[] = []
+): Promise<ImailEduResult> => {
+    // forceNew = true để luôn tạo cửa sổ mới khi tạo email
+    const { page, pageStatus } = await ensureImailEduPage(browserInstance, true);
 
     // Đảm bảo trang đã load xong
     await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => undefined);
@@ -342,7 +380,21 @@ export const createImailEduAddress = async (browserInstance: Browser): Promise<I
         const currentEmail = await getEmailFromDisplay(page);
 
         if (currentEmail && currentEmail.includes('.edu')) {
-            // Tìm thấy email có .edu, lấy thông tin
+            // Kiểm tra xem email có chứa các từ khóa cần loại bỏ không
+            const containsExcludedKeyword = excludeKeywords.some((keyword) =>
+                currentEmail.toLowerCase().includes(keyword.toLowerCase())
+            );
+
+            if (containsExcludedKeyword) {
+                // Email chứa từ khóa cần loại bỏ, tiếp tục tạo email mới
+                if (attempts < maxAttempts) {
+                    await clickNewButton(page);
+                    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+                }
+                continue; // Bỏ qua email này và thử lại
+            }
+
+            // Email hợp lệ (có .edu và không chứa từ khóa loại bỏ), lấy thông tin
             email = currentEmail;
             const emailParts = currentEmail.split('@');
             if (emailParts.length === 2) {
@@ -372,6 +424,10 @@ export const createImailEduAddress = async (browserInstance: Browser): Promise<I
         );
     }
 
+    // Lưu mapping email -> { page, browser } để có thể đóng cửa sổ sau này
+    const browser = page.browser();
+    registerEmailBrowser(email, page, browser);
+
     return {
         url: IMAIL_EDU_URL,
         pageStatus,
@@ -382,30 +438,42 @@ export const createImailEduAddress = async (browserInstance: Browser): Promise<I
 };
 
 export const readImailEduInbox = async (
-    browserInstance: Browser,
+    _browserInstance: Browser,
     expectedEmail?: string
 ): Promise<{ email: string; inbox: unknown; pageStatus: ImailEduResult['pageStatus'] }> => {
-    // Tìm page đang mở imail.edu.vn (có thể ở trang chủ hoặc mailbox)
-    const pages = await browserInstance.pages();
     let page: Page | null = null;
+    let browser: Browser | null = null;
+    let currentEmail = '';
 
-    for (const p of pages) {
+    // BẮT BUỘC: phải có expectedEmail để tìm đúng browser đã lưu
+    if (!expectedEmail || expectedEmail.trim().length === 0) {
+        throw new Error('Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó.');
+    }
+
+    const emailTrimmed = expectedEmail.trim();
+
+    // Tìm browser và page đã được register cho email này
+    const registeredBrowser = getBrowserByEmail(emailTrimmed);
+    const registeredPage = getPageByEmail(emailTrimmed);
+
+    if (registeredBrowser && registeredPage) {
         try {
-            const url = p.url();
-            if (url.includes('imail.edu.vn')) {
-                page = p;
-                await p.bringToFront();
-                break;
+            // Kiểm tra browser và page còn sống không
+            if (registeredBrowser.isConnected()) {
+                await registeredPage.url();
+                browser = registeredBrowser;
+                page = registeredPage;
+                await page.bringToFront();
+                currentEmail = emailTrimmed;
             }
         } catch {
-            continue;
+            // Browser hoặc page đã bị đóng
+            throw new Error(`Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`);
         }
     }
 
-    // Nếu không tìm thấy, mở trang mới
-    if (!page) {
-        const { page: newPage } = await ensureImailEduPage(browserInstance);
-        page = newPage;
+    if (!page || !browser) {
+        throw new Error(`Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`);
     }
 
     // Đảm bảo đang ở trang mailbox hoặc trang có email
@@ -420,15 +488,17 @@ export const readImailEduInbox = async (
         await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
     }
 
-    // Lấy email hiện tại từ trang
-    const currentEmail = await getEmailFromDisplay(page);
+    // Lấy email hiện tại từ trang (nếu chưa có từ expectedEmail)
     if (!currentEmail) {
-        throw new Error('Không tìm thấy địa chỉ email hiện tại trên trang imailEdu.');
-    }
-
-    // Kiểm tra expectedEmail nếu có
-    if (expectedEmail && expectedEmail.trim().length > 0 && expectedEmail !== currentEmail) {
-        // vẫn tiếp tục đọc, nhưng ghi nhận mismatch nếu cần xử lý phía client
+        const emailFromPage = await getEmailFromDisplay(page);
+        if (emailFromPage) {
+            currentEmail = emailFromPage;
+        } else if (expectedEmail && expectedEmail.trim().length > 0) {
+            // Nếu không tìm thấy trên trang nhưng có expectedEmail, dùng expectedEmail
+            currentEmail = expectedEmail.trim();
+        } else {
+            throw new Error('Không tìm thấy địa chỉ email hiện tại trên trang imailEdu.');
+        }
     }
 
     const targetUrl = 'https://imail.edu.vn/livewire/message/frontend.app';

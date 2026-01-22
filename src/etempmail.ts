@@ -1,5 +1,6 @@
 import type { Browser, Page, HTTPResponse } from 'puppeteer';
 import { ensureBrowser, ensurePageViewport } from './openChrome';
+import { registerEmailBrowser, getPageByEmail, getBrowserByEmail } from './emailPageMap';
 
 export type EtempmailResult = {
     url: string;
@@ -131,8 +132,18 @@ const findAnyOpenPage = async (browserInstance: Browser): Promise<Page | null> =
 };
 
 export const ensureEtempmailPage = async (
-    browserInstance: Browser
+    browserInstance: Browser,
+    forceNew = false
 ): Promise<{ page: Page; pageStatus: EtempmailResult['pageStatus'] }> => {
+    // Nếu forceNew = true, luôn tạo page mới (dùng khi tạo email mới)
+    if (forceNew) {
+        const page = await browserInstance.newPage();
+        await ensurePageViewport(page);
+        await page.goto(ETEMPMAIL_URL, { waitUntil: 'domcontentloaded' });
+        return { page, pageStatus: 'opened' };
+    }
+
+    // Nếu không forceNew, reuse page nếu có (dùng khi đọc inbox)
     const existing = await findOpenPageByExactUrl(browserInstance, ETEMPMAIL_URL);
     if (existing) {
         await existing.bringToFront();
@@ -168,7 +179,8 @@ const clickDeleteEmailAddress = async (page: Page): Promise<void> => {
 export const getNewEtempmailAddress = async (
     browserInstance: Browser
 ): Promise<EtempmailResult> => {
-    const { page, pageStatus } = await ensureEtempmailPage(browserInstance);
+    // forceNew = true để luôn tạo cửa sổ mới khi tạo email
+    const { page, pageStatus } = await ensureEtempmailPage(browserInstance, true);
 
     // read current email if present
     const before = await extractEmailFromPage(page);
@@ -196,6 +208,10 @@ export const getNewEtempmailAddress = async (
     if (!email) {
         throw new Error('Could not find email on eTempMail page after clicking delete.');
     }
+
+    // Lưu mapping email -> { page, browser } để có thể đóng cửa sổ sau này
+    const browser = page.browser();
+    registerEmailBrowser(email, page, browser);
 
     return { url: ETEMPMAIL_URL, email, pageStatus };
 };
@@ -244,10 +260,43 @@ const scrapeMessages = async (page: Page): Promise<EtempmailMessage[]> => {
 };
 //
 export const readEtempmailInbox = async (
-    browserInstance: Browser,
+    _browserInstance: Browser,
     expectedEmail?: string
 ): Promise<{ email: string; inbox: unknown; pageStatus: EtempmailResult['pageStatus'] }> => {
-    const { page, pageStatus } = await ensureEtempmailPage(browserInstance);
+    let page: Page | null = null;
+    let browser: Browser | null = null;
+    let pageStatus: EtempmailResult['pageStatus'] = 'opened';
+
+    // BẮT BUỘC: phải có expectedEmail để tìm đúng browser đã lưu
+    if (!expectedEmail || expectedEmail.trim().length === 0) {
+        throw new Error('Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó.');
+    }
+
+    const emailTrimmed = expectedEmail.trim();
+
+    // Tìm browser và page đã được register cho email này
+    const registeredBrowser = getBrowserByEmail(emailTrimmed);
+    const registeredPage = getPageByEmail(emailTrimmed);
+
+    if (registeredBrowser && registeredPage) {
+        try {
+            // Kiểm tra browser và page còn sống không
+            if (registeredBrowser.isConnected()) {
+                await registeredPage.url();
+                browser = registeredBrowser;
+                page = registeredPage;
+                await page.bringToFront();
+                pageStatus = 'already-open';
+            }
+        } catch {
+            // Browser hoặc page đã bị đóng
+            throw new Error(`Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`);
+        }
+    }
+
+    if (!page || !browser) {
+        throw new Error(`Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`);
+    }
 
     // Wait for page to be fully loaded and inbox to render
     // Đợi một chút để trang render và có thể đã gọi API getInbox
