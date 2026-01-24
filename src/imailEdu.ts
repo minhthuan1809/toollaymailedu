@@ -239,70 +239,70 @@ const clickNewButton = async (page: Page): Promise<void> => {
 const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
     try {
         const email = await page.evaluate(() => {
-        // Tìm div có class chứa các class bạn cung cấp: block appearance-none w-full bg-white text-white py-4 px-5 pr-8 bg-opacity-10 rounded-md cursor-pointer focus:outline-none select-none
-        const divs = Array.from(document.querySelectorAll('div')) as HTMLElement[];
-        const emailDiv = divs.find((div) => {
-            const classList = Array.from(div.classList);
-            // Kiểm tra các class quan trọng
-            const hasKeyClasses =
-                classList.includes('block') &&
-                classList.includes('appearance-none') &&
-                classList.includes('select-none') &&
-                (classList.includes('bg-opacity-10') || classList.some((c) => c.includes('bg-opacity')));
-            
-            if (hasKeyClasses) {
-                const text = div.textContent?.trim() || '';
-                // Kiểm tra xem có chứa email không
-                return text.includes('@') && /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(text);
-            }
-            return false;
-        });
+            // Tìm div có class chứa các class bạn cung cấp: block appearance-none w-full bg-white text-white py-4 px-5 pr-8 bg-opacity-10 rounded-md cursor-pointer focus:outline-none select-none
+            const divs = Array.from(document.querySelectorAll('div')) as HTMLElement[];
+            const emailDiv = divs.find((div) => {
+                const classList = Array.from(div.classList);
+                // Kiểm tra các class quan trọng
+                const hasKeyClasses =
+                    classList.includes('block') &&
+                    classList.includes('appearance-none') &&
+                    classList.includes('select-none') &&
+                    (classList.includes('bg-opacity-10') || classList.some((c) => c.includes('bg-opacity')));
 
-        if (emailDiv) {
-            const text = emailDiv.textContent?.trim() || '';
-            // Extract email từ text
-            const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
-            const match = text.match(emailRegex);
-            return match ? match[0] : null;
-        }
-
-        // Fallback 1: tìm trong input có value chứa email
-        const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
-        for (const input of inputs) {
-            const value = input.value?.trim() || '';
-            if (value.includes('@')) {
-                const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
-                const match = value.match(emailRegex);
-                if (match) {
-                    return match[0];
+                if (hasKeyClasses) {
+                    const text = div.textContent?.trim() || '';
+                    // Kiểm tra xem có chứa email không
+                    return text.includes('@') && /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(text);
                 }
-            }
-        }
+                return false;
+            });
 
-        // Fallback 2: tìm bất kỳ div nào chứa email
-        for (const div of divs) {
-            const text = div.textContent?.trim() || '';
-            if (text.includes('@')) {
+            if (emailDiv) {
+                const text = emailDiv.textContent?.trim() || '';
+                // Extract email từ text
                 const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
                 const match = text.match(emailRegex);
+                return match ? match[0] : null;
+            }
+
+            // Fallback 1: tìm trong input có value chứa email
+            const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+            for (const input of inputs) {
+                const value = input.value?.trim() || '';
+                if (value.includes('@')) {
+                    const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+                    const match = value.match(emailRegex);
+                    if (match) {
+                        return match[0];
+                    }
+                }
+            }
+
+            // Fallback 2: tìm bất kỳ div nào chứa email
+            for (const div of divs) {
+                const text = div.textContent?.trim() || '';
+                if (text.includes('@')) {
+                    const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+                    const match = text.match(emailRegex);
+                    if (match) {
+                        return match[0];
+                    }
+                }
+            }
+
+            // Fallback 3: tìm trong toàn bộ body text
+            const bodyText = document.body.innerText || '';
+            if (bodyText.includes('@')) {
+                const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+                const match = bodyText.match(emailRegex);
                 if (match) {
                     return match[0];
                 }
             }
-        }
 
-        // Fallback 3: tìm trong toàn bộ body text
-        const bodyText = document.body.innerText || '';
-        if (bodyText.includes('@')) {
-            const emailRegex = /[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
-            const match = bodyText.match(emailRegex);
-            if (match) {
-                return match[0];
-            }
-        }
-
-        return null;
-    });
+            return null;
+        });
 
         return email;
     } catch (e) {
@@ -458,12 +458,63 @@ export const readImailEduInbox = async (
     }
 
     const currentUrl = page.url();
+    const targetUrl = 'https://imail.edu.vn/livewire/message/frontend.app';
+    let inboxData: unknown = null;
+
+    // 1) Thu thập TẤT CẢ response livewire/message, rồi chọn cái có serverMemo.data.messages
+    //    (tránh bắt nhầm response delta chỉ có checksum, không có data)
+    const responsePromises: Promise<unknown>[] = [];
+    const onResponse = (res: HTTPResponse) => {
+        const url = res.url();
+        if (!url.includes('livewire/message/frontend.app') && !url.includes('livewire/message')) return;
+        responsePromises.push(res.json().catch(() => null));
+    };
+    page.on('response', onResponse);
+
     if (!currentUrl.includes('/mailbox')) {
         await page.goto('https://imail.edu.vn/mailbox', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(150);
     } else {
         await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(150);
+    }
+
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(600);
+
+    await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button, div[x-on\\:click]')).find((b) => {
+            const t = (b.textContent || '').toLowerCase();
+            const on = b.getAttribute('x-on:click') || b.getAttribute('onclick') || '';
+            return t.includes('refresh') || on.includes('refresh');
+        });
+        if (btn) (btn as HTMLElement).click();
+        else {
+            window.dispatchEvent(new Event('scroll'));
+            if (typeof (window as unknown as { Livewire?: { emit: (e: string) => void } }).Livewire !== 'undefined') {
+                (window as unknown as { Livewire: { emit: (e: string) => void } }).Livewire.emit('refresh');
+            }
+        }
+    });
+
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(4500);
+
+    page.off('response', onResponse);
+
+    const settled = await Promise.allSettled(responsePromises);
+    const candidates = settled
+        .filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled')
+        .map((r) => r.value)
+        .filter((v) => v != null);
+
+    for (const j of candidates) {
+        if (typeof j !== 'object' || j === null) continue;
+        const sm = (j as { serverMemo?: { data?: { messages?: unknown } } }).serverMemo;
+        if (sm && typeof sm === 'object' && Array.isArray(sm.data?.messages)) {
+            inboxData = j;
+            break;
+        }
+    }
+    if (!inboxData) {
+        const withData = candidates.find((j) => (j as { serverMemo?: { data?: unknown } })?.serverMemo?.data != null);
+        if (withData) inboxData = withData;
     }
 
     // Lấy email hiện tại từ trang (nếu chưa có từ expectedEmail)
@@ -472,68 +523,59 @@ export const readImailEduInbox = async (
         if (emailFromPage) {
             currentEmail = emailFromPage;
         } else if (expectedEmail && expectedEmail.trim().length > 0) {
-            // Nếu không tìm thấy trên trang nhưng có expectedEmail, dùng expectedEmail
             currentEmail = expectedEmail.trim();
         } else {
             throw new Error('Không tìm thấy địa chỉ email hiện tại trên trang imailEdu.');
         }
     }
 
-    const targetUrl = 'https://imail.edu.vn/livewire/message/frontend.app';
-    let inboxData: unknown = null;
+    // 2) Nếu chưa có data, thử bắt request khi click refresh (fallback)
+    if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
+        try {
+            const responsePromise = page.waitForResponse(
+                (res: HTTPResponse) => {
+                    const url = res.url();
+                    return url.includes('livewire/message/frontend.app') || url.includes('livewire/message');
+                },
+                { timeout: 8000 }
+            ).catch(() => null);
 
-    // Thử bắt network response trước (ưu tiên vì Livewire có thể cần request body cụ thể)
-    try {
-        // Setup response listener TRƯỚC khi trigger action
-        const responsePromise = page.waitForResponse(
-            (res: HTTPResponse) => {
-                const url = res.url();
-                return url.includes('livewire/message/frontend.app') || url.includes('livewire/message');
-            },
-            { timeout: 8000 }
-        ).catch(() => null);
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(80);
 
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(50);
-
-        await page.evaluate(() => {
-            // Tìm và click refresh button nếu có
-            const buttons = Array.from(document.querySelectorAll('button, div[x-on\\:click], div[onclick]')) as HTMLElement[];
-            const refreshBtn = buttons.find((btn) => {
-                const text = btn.textContent?.toLowerCase() || '';
-                const onClick = btn.getAttribute('x-on:click') || btn.getAttribute('onclick') || '';
-                return text.includes('refresh') || onClick.includes('refresh');
+            await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button, div[x-on\\:click], div[onclick]')) as HTMLElement[];
+                const refreshBtn = buttons.find((btn) => {
+                    const text = btn.textContent?.toLowerCase() || '';
+                    const onClick = btn.getAttribute('x-on:click') || btn.getAttribute('onclick') || '';
+                    return text.includes('refresh') || onClick.includes('refresh');
+                });
+                if (refreshBtn) refreshBtn.click();
+                else {
+                    window.dispatchEvent(new Event('scroll'));
+                    if (typeof (window as unknown as { Livewire?: { emit: (event: string) => void } }).Livewire !== 'undefined') {
+                        (window as unknown as { Livewire: { emit: (event: string) => void } }).Livewire.emit('refresh');
+                    }
+                }
             });
 
-            if (refreshBtn) {
-                refreshBtn.click();
-            } else {
-                // Hoặc trigger bằng cách dispatch event
-                window.dispatchEvent(new Event('scroll'));
-                // Hoặc trigger Livewire update
-                if (typeof (window as unknown as { Livewire?: { emit: (event: string) => void } }).Livewire !== 'undefined') {
-                    (window as unknown as { Livewire: { emit: (event: string) => void } }).Livewire.emit('refresh');
-                }
-            }
-        });
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
 
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(400);
-
-        const response = await responsePromise;
-
-        if (response) {
-            try {
-                inboxData = await response.json();
-            } catch {
-                const text = await response.text();
+            const response = await responsePromise;
+            if (response) {
                 try {
-                    inboxData = JSON.parse(text);
+                    inboxData = await response.json();
                 } catch {
-                    inboxData = text;
+                    const text = await response.text();
+                    try {
+                        inboxData = JSON.parse(text);
+                    } catch {
+                        inboxData = text;
+                    }
                 }
             }
+        } catch {
+            // Ignore
         }
-    } catch {
-        // Ignore và thử fetch trực tiếp
     }
 
     // Nếu không bắt được network response, thử fetch trực tiếp từ page context
@@ -544,7 +586,7 @@ export const readImailEduInbox = async (
                     // Lấy Livewire component data từ DOM nếu có
                     const livewireData = document.querySelector('[wire\\:id]');
                     let body: unknown = {};
-                    
+
                     if (livewireData) {
                         const wireId = livewireData.getAttribute('wire:id');
                         const fingerprint = (window as unknown as { Livewire?: { find: (id: string) => unknown } }).Livewire?.find(wireId || '');
@@ -620,13 +662,16 @@ export const readImailEduInbox = async (
         }
     }
 
-    // Fallback: nếu không bắt được network, trả về empty
+    // DEBUG: log toàn bộ response ra console
+    console.log('[imailEdu] RAW Livewire response:', JSON.stringify(inboxData, null, 2));
+
+    // Fallback: không bắt được response thì trả empty
     if (!inboxData || (typeof inboxData === 'object' && inboxData !== null && Object.keys(inboxData).length === 0)) {
         inboxData = { messages: [], fallback: true };
     }
 
-    // Xác định pageStatus
     const pageStatus: ImailEduResult['pageStatus'] = currentUrl.includes('imail.edu.vn') ? 'already-open' : 'opened';
 
+    // Trả y nguyên 100% response Livewire (effects, serverMemo, ...), không xử lý/chuẩn hóa
     return { email: currentEmail, inbox: inboxData, pageStatus };
 };
