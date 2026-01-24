@@ -56,56 +56,33 @@ const findAnyOpenPage = async (browserInstance: Browser): Promise<Page | null> =
 };
 
 const clickDomainInput = async (page: Page): Promise<void> => {
-    // Đợi input domain xuất hiện - giảm timeout
-    await page.waitForSelector("input[name=\"domain\"]", {
-        timeout: 5000
-    });
-
-    // Click vào div cha có @click="open = ! open" thay vì click trực tiếp vào input readonly
-    // Dùng JavaScript để tìm và click vào div cha
+    await page.waitForSelector("input[name=\"domain\"]", { timeout: 2000 });
     await page.evaluate(() => {
         const input = document.querySelector("input[name='domain']") as HTMLInputElement | null;
-        if (!input) {
-            throw new Error("❌ Không tìm thấy input domain");
-        }
-
-        // Tìm div cha có @click="open = ! open"
+        if (!input) throw new Error("❌ Không tìm thấy input domain");
         let parent = input.parentElement;
         while (parent) {
-            // Kiểm tra xem div có chứa input và có thể click được không
             if (parent.querySelector('input[name="domain"]')) {
-                // Click vào div cha này để toggle dropdown
                 (parent as HTMLElement).click();
                 return;
             }
             parent = parent.parentElement;
         }
-
-        // Fallback: click vào input nếu không tìm thấy div cha
         input.click();
     });
-
-    // Đợi dropdown xuất hiện - giảm từ 300ms xuống 100ms
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(100);
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(20);
 };
 
 const pickRandomEduDomain = async (page: Page): Promise<string> => {
-    // Đợi dropdown render giống như setTimeout trong script của bạn (100ms)
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(100);
-
-    // Đảm bảo dropdown đã mở (x-show="open" thành true)
     await page.waitForFunction(
         () => {
-            const dropdown = document.querySelector('div[x-show="open"]');
-            if (!dropdown) return false;
-            const style = window.getComputedStyle(dropdown);
-            return style.display !== 'none' && style.visibility !== 'hidden';
+            const d = document.querySelector('div[x-show="open"]');
+            if (!d) return false;
+            const s = window.getComputedStyle(d);
+            return s.display !== 'none' && s.visibility !== 'hidden';
         },
-        { timeout: 5000 }
-    ).catch(() => {
-        // Nếu không tìm thấy bằng x-show, đợi thêm một chút
-        return Promise.resolve();
-    });
+        { timeout: 1000 }
+    ).catch(() => Promise.resolve());
 
     const result = await page.$$eval(
         'a',
@@ -141,11 +118,20 @@ const pickRandomEduDomain = async (page: Page): Promise<string> => {
 const fillUserAndSubmit = async (page: Page): Promise<{ user: string }> => {
     const user = generateRandomUser(15, 20);
 
-    await page.waitForSelector(USER_INPUT_SELECTOR, { visible: true, timeout: 10000 });
-    await page.type(USER_INPUT_SELECTOR, user);
+    await page.waitForSelector(USER_INPUT_SELECTOR, { visible: true, timeout: 3000 });
+    await page.evaluate((sel, val) => {
+        const el = document.querySelector(sel) as HTMLInputElement | null;
+        if (el) {
+            el.value = val;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }, USER_INPUT_SELECTOR, user);
 
-    await page.waitForSelector(SUBMIT_INPUT_SELECTOR, { visible: true, timeout: 10000 });
-    await page.click(SUBMIT_INPUT_SELECTOR);
+    await page.waitForSelector(SUBMIT_INPUT_SELECTOR, { visible: true, timeout: 3000 });
+    await page.evaluate((sel) => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (el) el.click();
+    }, SUBMIT_INPUT_SELECTOR);
 
     return { user };
 };
@@ -154,33 +140,31 @@ export const ensureImailEduPage = async (
     browserInstance: Browser,
     forceNew = false
 ): Promise<{ page: Page; pageStatus: ImailEduResult['pageStatus'] }> => {
-    // Nếu forceNew = true, luôn tạo page mới (dùng khi tạo email mới)
     if (forceNew) {
         const page = await browserInstance.newPage();
         await page.setViewport({ width: 1200, height: 800 });
-        await (page as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 1000);
+        // domcontentloaded nhanh hơn nhiều so với load+networkidle2
+        await page.goto(IMAIL_EDU_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
         return { page, pageStatus: 'opened' };
     }
 
-    // Nếu không forceNew, reuse page nếu có (dùng khi đọc inbox)
     const existing = await findOpenPageByExactUrl(browserInstance, IMAIL_EDU_URL);
     if (existing) {
         await existing.bringToFront();
-        // Đợi trang load hoàn toàn: dùng navigate từ undetected-browser
-        await (existing as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 1000);
+        await (existing as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 0);
         return { page: existing, pageStatus: 'already-open' };
     }
 
     const anyOpen = await findAnyOpenPage(browserInstance);
     if (anyOpen) {
         await anyOpen.bringToFront();
-        await (anyOpen as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 1000);
+        await (anyOpen as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 0);
         return { page: anyOpen, pageStatus: 'already-open' };
     }
 
     const page = await browserInstance.newPage();
     await page.setViewport({ width: 1200, height: 800 });
-    await (page as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 1000);
+    await (page as unknown as { navigate: (url: string, delay?: number) => Promise<void> }).navigate(IMAIL_EDU_URL, 0);
     return { page, pageStatus: 'opened' };
 };
 
@@ -201,38 +185,44 @@ export const openImailEduDomainPicker = async (
     };
 };
 
+const RANDOM_EMAIL_BTN = 'input[value="Create a Random Email"]';
+
 const clickRandomEmailButton = async (page: Page): Promise<void> => {
-    // Tìm và click nút đơn giản như code JavaScript bạn cung cấp
-    const clicked = await page.evaluate(() => {
-        const btn = document.querySelector('input[value="Create a Random Email"]') as HTMLInputElement | null;
-        if (btn) {
-            btn.click();
-            return true;
+    await page.waitForSelector(RANDOM_EMAIL_BTN, { visible: true, timeout: 5000 });
+    await page.evaluate((sel) => {
+        const btn = document.querySelector(sel) as HTMLElement | null;
+        if (btn) btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+    }, RANDOM_EMAIL_BTN);
+
+    // Click có thể gây navigation → chờ navigation xong rồi mới poll (tránh "Execution context was destroyed")
+    const navPromise = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 }).catch(() => null);
+    await page.click(RANDOM_EMAIL_BTN, { delay: 0 });
+    await navPromise;
+
+    const pollMs = 80;
+    const maxWaitMs = 5000;
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(pollMs);
+        try {
+            const email = await getEmailFromDisplay(page);
+            if (email?.includes('@')) return;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg.includes('Execution context was destroyed') || msg.includes('Target closed')) continue;
+            throw e;
         }
-        return false;
-    });
-
-    if (!clicked) {
-        throw new Error('Không tìm thấy nút "Create a Random Email" trên trang.');
     }
-
-    // Đợi form submit và trang cập nhật
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 }).catch(() => undefined);
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1500);
 };
 
 const clickNewButton = async (page: Page): Promise<void> => {
-    // Tìm và click nút "New" có x-on:click="in_app = true"
     const clicked = await page.evaluate(() => {
         const divs = Array.from(document.querySelectorAll('div[x-on\\:click]')) as HTMLElement[];
         const newButton = divs.find((div) => {
             const onClick = div.getAttribute('x-on:click');
             return onClick === 'in_app = true' || onClick?.includes('in_app = true');
         });
-
         if (newButton) {
-            // Tìm text "New" bên trong
             const text = newButton.textContent?.trim().toLowerCase() || '';
             if (text.includes('new')) {
                 newButton.click();
@@ -242,17 +232,13 @@ const clickNewButton = async (page: Page): Promise<void> => {
         return false;
     });
 
-    if (!clicked) {
-        throw new Error('Không tìm thấy nút "New" trên trang.');
-    }
-
-    // Đợi trang cập nhật
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+    if (!clicked) throw new Error('Không tìm thấy nút "New" trên trang.');
+    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(80);
 };
 
 const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
-    // Lấy email từ div có class cụ thể như bạn cung cấp
-    const email = await page.evaluate(() => {
+    try {
+        const email = await page.evaluate(() => {
         // Tìm div có class chứa các class bạn cung cấp: block appearance-none w-full bg-white text-white py-4 px-5 pr-8 bg-opacity-10 rounded-md cursor-pointer focus:outline-none select-none
         const divs = Array.from(document.querySelectorAll('div')) as HTMLElement[];
         const emailDiv = divs.find((div) => {
@@ -318,13 +304,18 @@ const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
         return null;
     });
 
-    return email;
+        return email;
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('Execution context was destroyed') || msg.includes('Target closed')) return null;
+        throw e;
+    }
 };
 
 const getCurrentDomain = async (page: Page): Promise<string | null> => {
     try {
         // Đúng theo DOM bạn gửi: input[name="domain"] là field hiển thị domain
-        await page.waitForSelector('input[name="domain"]', { timeout: 5000 }).catch(() => undefined);
+        await page.waitForSelector('input[name="domain"]', { timeout: 2000 }).catch(() => undefined);
 
         const inputs = await page.$$('input[name="domain"]');
 
@@ -354,12 +345,7 @@ export const createImailEduAddress = async (
     browserInstance: Browser,
     excludeKeywords: string[] = []
 ): Promise<ImailEduResult> => {
-    // forceNew = true để luôn tạo cửa sổ mới khi tạo email
     const { page, pageStatus } = await ensureImailEduPage(browserInstance, true);
-
-    // Đảm bảo trang đã load xong
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => undefined);
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
 
     const maxAttempts = 20; // Giới hạn số lần thử để tránh vòng lặp vô hạn
     let attempts = 0;
@@ -373,10 +359,7 @@ export const createImailEduAddress = async (
         // Click vào nút "Create a Random Email"
         await clickRandomEmailButton(page);
 
-        // Đợi một lúc để email hiển thị
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
-
-        // Lấy email từ div hiển thị
+        // clickRandomEmailButton đã poll cho email hiển thị, chỉ cần đọc
         const currentEmail = await getEmailFromDisplay(page);
 
         if (currentEmail && currentEmail.includes('.edu')) {
@@ -386,12 +369,11 @@ export const createImailEduAddress = async (
             );
 
             if (containsExcludedKeyword) {
-                // Email chứa từ khóa cần loại bỏ, tiếp tục tạo email mới
                 if (attempts < maxAttempts) {
                     await clickNewButton(page);
-                    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+                    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(200);
                 }
-                continue; // Bỏ qua email này và thử lại
+                continue;
             }
 
             // Email hợp lệ (có .edu và không chứa từ khóa loại bỏ), lấy thông tin
@@ -411,10 +393,9 @@ export const createImailEduAddress = async (
             break; // Thoát khỏi vòng lặp
         }
 
-        // Nếu không có .edu, click nút "New" rồi thử lại
         if (attempts < maxAttempts) {
             await clickNewButton(page);
-            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(1000);
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(80);
         }
     }
 
@@ -476,16 +457,13 @@ export const readImailEduInbox = async (
         throw new Error(`Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`);
     }
 
-    // Đảm bảo đang ở trang mailbox hoặc trang có email
     const currentUrl = page.url();
     if (!currentUrl.includes('/mailbox')) {
-        // Navigate đến mailbox nếu chưa ở đó
         await page.goto('https://imail.edu.vn/mailbox', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(150);
     } else {
-        // Refresh trang mailbox
         await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(150);
     }
 
     // Lấy email hiện tại từ trang (nếu chưa có từ expectedEmail)
@@ -512,13 +490,11 @@ export const readImailEduInbox = async (
                 const url = res.url();
                 return url.includes('livewire/message/frontend.app') || url.includes('livewire/message');
             },
-            { timeout: 15000 }
+            { timeout: 8000 }
         ).catch(() => null);
 
-        // Đợi một chút để đảm bảo listener đã được setup
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(500);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(50);
 
-        // Trigger refresh hoặc action để gọi API Livewire
         await page.evaluate(() => {
             // Tìm và click refresh button nếu có
             const buttons = Array.from(document.querySelectorAll('button, div[x-on\\:click], div[onclick]')) as HTMLElement[];
@@ -540,8 +516,7 @@ export const readImailEduInbox = async (
             }
         });
 
-        // Đợi response
-        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+        await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(400);
 
         const response = await responsePromise;
 
@@ -613,28 +588,19 @@ export const readImailEduInbox = async (
                     const url = res.url();
                     return url.includes('livewire/message/frontend.app') || url.startsWith(targetUrl);
                 },
-                { timeout: 10000 }
+                { timeout: 6000 }
             ).catch(() => null);
 
-            // Đợi một chút để đảm bảo listener đã được setup
-            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(300);
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(50);
 
-            // Trigger refresh hoặc action để gọi API
             await page.evaluate(() => {
-                // Thử trigger Livewire update bằng cách click vào refresh button hoặc scroll
-                const refreshBtn = document.querySelector('[onclick*="refresh"], button:has-text("Refresh"), [aria-label*="refresh" i]') as HTMLElement | null;
-                if (refreshBtn) {
-                    refreshBtn.click();
-                } else {
-                    // Hoặc trigger bằng cách scroll
-                    window.dispatchEvent(new Event('scroll'));
-                }
+                const refreshBtn = document.querySelector('[onclick*="refresh"], [aria-label*="refresh" i]') as HTMLElement | null;
+                if (refreshBtn) refreshBtn.click();
+                else window.dispatchEvent(new Event('scroll'));
             });
 
-            // Đợi auto-refresh hoặc response
-            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(2000);
+            await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(400);
 
-            // Đợi response
             const response = await responsePromise;
 
             if (response) {
