@@ -3,7 +3,7 @@ import type { Browser } from 'puppeteer';
 import { getNewEtempmailAddress, readEtempmailInbox } from './etempmail';
 import { closeBrowser, ensureBrowser, createNewBrowser } from './openChrome';
 import { createImailEduAddress, readImailEduInbox } from './imailEdu';
-import { closeBrowserByEmail } from './emailPageMap';
+import { closeBrowserByEmail, closeAllBrowsers } from './emailPageMap';
 
 type GmailNewBodyItem = {
     type?: 'etempmail' | 'imailedu';
@@ -100,7 +100,19 @@ const handleCloseEmail = async (email: string, res: Response): Promise<void> => 
         // Nếu decode fail, dùng email gốc
         emailDecoded = email;
     }
-    const emailTrimmed = emailDecoded.trim();
+    const emailTrimmed = emailDecoded.trim().toLowerCase();
+
+    // Kiểm tra nếu là "all" thì đóng tất cả browsers
+    if (emailTrimmed === 'all') {
+        const closedCount = await closeAllBrowsers();
+        res.json({ 
+            status: 'ok', 
+            message: `Đã đóng tất cả ${closedCount} cửa sổ browser` 
+        });
+        return;
+    }
+
+    // Đóng browser của email cụ thể
     const closed = await closeBrowserByEmail(emailTrimmed);
     
     if (closed) {

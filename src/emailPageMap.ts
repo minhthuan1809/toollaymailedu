@@ -44,3 +44,39 @@ export const closeBrowserByEmail = async (email: string): Promise<boolean> => {
 export const getAllRegisteredEmails = (): string[] => {
     return Array.from(emailBrowserMap.keys());
 };
+
+export const closeAllBrowsers = async (): Promise<number> => {
+    let closedCount = 0;
+    const browsersToClose: Browser[] = [];
+    const emailsToRemove: string[] = [];
+
+    // Thu thập tất cả browsers cần đóng
+    for (const [email, info] of emailBrowserMap.entries()) {
+        try {
+            if (info.browser.isConnected()) {
+                browsersToClose.push(info.browser);
+            }
+            emailsToRemove.push(email);
+        } catch {
+            // Browser đã bị đóng, chỉ cần xóa khỏi map
+            emailsToRemove.push(email);
+        }
+    }
+
+    // Đóng tất cả browsers
+    for (const browser of browsersToClose) {
+        try {
+            await browser.close();
+            closedCount++;
+        } catch {
+            // Ignore errors khi đóng browser
+        }
+    }
+
+    // Xóa tất cả entries khỏi map
+    for (const email of emailsToRemove) {
+        emailBrowserMap.delete(email);
+    }
+
+    return closedCount;
+};
