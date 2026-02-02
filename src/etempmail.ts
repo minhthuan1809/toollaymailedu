@@ -85,7 +85,7 @@ const extractEmailCandidates = async (page: Page): Promise<string[]> => {
 
         document.querySelectorAll('[id*="mail"],[id*="email"],[class*="mail"],[class*="email"]').forEach((el) => {
             addIfEmail(el.textContent ?? '');
-            addIfEmail((el as HTMLElement).innerText ?? '');
+            addIfEmail((el && 'innerText' in el) ? (el as HTMLElement).innerText ?? '' : '');
         });
 
         return Array.from(emails);
@@ -226,7 +226,7 @@ const scrapeMessages = async (page: Page): Promise<EtempmailMessage[]> => {
 
         const pickText = (el: Element | null): string | undefined => {
             if (!el) return undefined;
-            const t = (el as HTMLElement).innerText || el.textContent || '';
+            const t = ('innerText' in el ? (el as HTMLElement).innerText : null) || el.textContent || '';
             const trimmed = t.trim();
             return trimmed.length > 0 ? trimmed : undefined;
         };
