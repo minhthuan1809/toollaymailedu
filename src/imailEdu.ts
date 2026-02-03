@@ -218,23 +218,42 @@ export const openImailEduDomainPicker = async (
   };
 };
 
-const RANDOM_EMAIL_BTN = 'input[value="Create a Random Email"]';
-
 const clickRandomEmailButton = async (page: Page): Promise<void> => {
-  await page.waitForSelector(RANDOM_EMAIL_BTN, {
-    visible: true,
-    timeout: 5000,
-  });
-  await page.evaluate((sel) => {
-    const btn = document.querySelector(sel) as HTMLElement | null;
-    if (btn) btn.scrollIntoView({ behavior: "instant", block: "center" });
-  }, RANDOM_EMAIL_BTN);
-
-  // Click có thể gây navigation → chờ navigation xong rồi mới poll (tránh "Execution context was destroyed")
   const navPromise = page
     .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 6000 })
     .catch(() => null);
-  await page.click(RANDOM_EMAIL_BTN, { delay: 0 });
+
+  const clicked = await page.evaluate(() => {
+    const normalize = (value: string) =>
+      value.replace(/\s+/g, " ").trim().toLowerCase();
+    const targetText = "create a random email";
+
+    const elements = document.querySelectorAll<HTMLElement>("*");
+    for (const el of elements) {
+      const text = normalize(
+        el instanceof HTMLInputElement
+          ? el.value || el.getAttribute("value") || el.textContent || ""
+          : el.textContent || ""
+      );
+      if (!text) continue;
+      if (!text.includes(targetText)) continue;
+
+      try {
+        el.scrollIntoView({ behavior: "instant", block: "center" });
+      } catch {
+        /* ignore */
+      }
+      el.click();
+      return true;
+    }
+
+    return false;
+  });
+
+  if (!clicked) {
+    throw new Error('Không tìm thấy nút "Create a Random Email" trên trang.');
+  }
+
   await navPromise;
 
   const pollMs = 80;
@@ -261,63 +280,24 @@ const clickRandomEmailButton = async (page: Page): Promise<void> => {
 
 const clickNewButton = async (page: Page): Promise<void> => {
   const clicked = await page.evaluate(() => {
-    const hasNewText = (el: HTMLElement) =>
-      (el.textContent?.trim().toLowerCase() || "").includes("new");
+    const normalize = (value: string) =>
+      value.replace(/\s+/g, " ").trim().toLowerCase();
+    const target = "new";
 
-    // Cách 1: div có x-on:click="in_app = true" và text "New"
-    const byAlpine = document.querySelectorAll("div[x-on\\:click]");
-    for (const div of Array.from(byAlpine) as HTMLElement[]) {
-      const onClick = div.getAttribute("x-on:click");
-      if (
-        (onClick === "in_app = true" || onClick?.includes("in_app = true")) &&
-        hasNewText(div)
-      ) {
-        div.click();
-        return true;
-      }
-    }
+    const elements = document.querySelectorAll<HTMLElement>("*");
+    for (const el of elements) {
+      const text = normalize(el.textContent || "");
+      if (!text) continue;
+      if (text.length > 20) continue;
+      if (!text.includes(target)) continue;
 
-    // Cách 2: div có class giống nút New (bg-white, bg-opacity-10, rounded-md, cursor-pointer) và text "New"
-    const candidates = document.querySelectorAll(
-      "div.cursor-pointer.rounded-md, div[class*='bg-opacity-10']"
-    );
-    for (const div of Array.from(candidates) as HTMLElement[]) {
-      if (!hasNewText(div)) continue;
-      const cls = div.className || "";
-      if (
-        (cls.includes("bg-white") || cls.includes("bg-opacity")) &&
-        (cls.includes("rounded") || cls.includes("py-5"))
-      ) {
-        div.click();
-        return true;
+      try {
+        el.scrollIntoView({ behavior: "instant", block: "center" });
+      } catch {
+        /* ignore scroll errors */
       }
-    }
-
-    // Cách 3: div/button có text "New" (hoặc chỉ chứa "New") và có thể click
-    const allDivs = document.querySelectorAll("div, button");
-    for (const el of Array.from(allDivs) as HTMLElement[]) {
-      const text = (el.textContent?.trim() || "").replace(/\s+/g, " ");
-      if (!text.toLowerCase().includes("new") || text.length > 20) continue;
-      const cls = el.className || "";
-      const role = el.getAttribute("role") || "";
-      const isClickable =
-        cls.includes("cursor-pointer") ||
-        role === "button" ||
-        el.tagName === "BUTTON";
-      if (isClickable) {
-        el.click();
-        return true;
-      }
-      // Text "New" có thể nằm trong con; phần tử clickable có thể là cha
-      const parent = el.parentElement;
-      if (
-        parent &&
-        (parent.className || "").includes("cursor-pointer") &&
-        (parent.textContent?.trim().toLowerCase() || "").includes("new")
-      ) {
-        parent.click();
-        return true;
-      }
+      el.click();
+      return true;
     }
 
     return false;
@@ -464,54 +444,107 @@ export const createImailEduAddress = async (
   let user = "";
   let domain = "";
 
-  while (attempts < maxAttempts) {
+  const sleep = (ms: number) =>
+    (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(ms);
+
+  const clickRandomAndWait = async (): Promise<boolean> => {
+    if (attempts >= maxAttempts) return false;
     attempts += 1;
-
-    // Click vào nút "Create a Random Email"
     await clickRandomEmailButton(page);
+    return true;
+  };
 
-    // clickRandomEmailButton đã poll cho email hiển thị, chỉ cần đọc
-    const currentEmail = await getEmailFromDisplay(page);
+  const emailContainsExcluded = (value: string | null): boolean => {
+    if (!value) return false;
+    const lower = value.toLowerCase();
+    return excludeKeywords.some((keyword) =>
+      lower.includes(keyword.toLowerCase())
+    );
+  };
 
-    if (currentEmail && currentEmail.includes(".edu")) {
-      // Kiểm tra xem email có chứa các từ khóa cần loại bỏ không
-      const containsExcludedKeyword = excludeKeywords.some((keyword) =>
-        currentEmail.toLowerCase().includes(keyword.toLowerCase())
-      );
+  outer: while (attempts < maxAttempts) {
+    const clicked = await clickRandomAndWait();
+    if (!clicked) break;
 
-      if (containsExcludedKeyword) {
+    let currentEmail = await getEmailFromDisplay(page);
+
+    if (!currentEmail) {
+      if (attempts < maxAttempts) {
+        await clickNewButton(page);
+        await sleep(120);
+      }
+      continue;
+    }
+
+    if (!currentEmail.includes(".edu")) {
+      if (attempts < maxAttempts) {
+        await clickNewButton(page);
+        await sleep(120);
+      }
+      continue;
+    }
+
+    let containsExcludedKeyword = emailContainsExcluded(currentEmail);
+
+    while (attempts < maxAttempts && containsExcludedKeyword) {
+      await clickNewButton(page);
+      await sleep(150);
+
+      const nextClicked = await clickRandomAndWait();
+      if (!nextClicked) {
+        break outer;
+      }
+
+      currentEmail = await getEmailFromDisplay(page);
+
+      if (!currentEmail) {
         if (attempts < maxAttempts) {
           await clickNewButton(page);
-          await (
-            page as unknown as { sleep: (ms: number) => Promise<void> }
-          ).sleep(200);
+          await sleep(120);
         }
-        continue;
+        continue outer;
       }
 
-      // Email hợp lệ (có .edu và không chứa từ khóa loại bỏ), lấy thông tin
-      email = currentEmail;
-      const emailParts = currentEmail.split("@");
-      if (emailParts.length === 2) {
-        user = emailParts[0];
-        domain = emailParts[1];
-      } else {
-        // Fallback: parse từ email string
-        const match = currentEmail.match(/([A-Za-z0-9._-]+)@([A-Za-z0-9.-]+)/);
-        if (match) {
-          user = match[1];
-          domain = match[2];
+      if (!currentEmail.includes(".edu")) {
+        if (attempts < maxAttempts) {
+          await clickNewButton(page);
+          await sleep(120);
         }
+        continue outer;
       }
-      break; // Thoát khỏi vòng lặp
+
+      containsExcludedKeyword = emailContainsExcluded(currentEmail);
     }
 
-    if (attempts < maxAttempts) {
-      await clickNewButton(page);
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        80
-      );
+    if (!currentEmail) continue;
+
+    if (!currentEmail.includes(".edu")) {
+      if (attempts < maxAttempts) {
+        await clickNewButton(page);
+        await sleep(120);
+      }
+      continue;
     }
+
+    if (emailContainsExcluded(currentEmail)) {
+      continue;
+    }
+
+    // Email hợp lệ (có .edu và không chứa từ khóa loại bỏ), lấy thông tin
+    email = currentEmail;
+    const emailParts = currentEmail.split("@");
+    if (emailParts.length === 2) {
+      user = emailParts[0];
+      domain = emailParts[1];
+    } else {
+      // Fallback: parse từ email string
+      const match = currentEmail.match(/([A-Za-z0-9._-]+)@([A-Za-z0-9.-]+)/);
+      if (match) {
+        user = match[1];
+        domain = match[2];
+      }
+    }
+    break; // Thoát khỏi vòng lặp
   }
 
   if (!email || !user || !domain) {
