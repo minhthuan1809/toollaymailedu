@@ -223,32 +223,40 @@ const clickRandomEmailButton = async (page: Page): Promise<void> => {
     .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 6000 })
     .catch(() => null);
 
-  const clicked = await page.evaluate(() => {
-    const normalize = (value: string) =>
-      value.replace(/\s+/g, " ").trim().toLowerCase();
-    const targetText = "create a random email";
+  const tryClick = () =>
+    page.evaluate(() => {
+      const normalize = (value: string) =>
+        value.replace(/\s+/g, " ").trim().toLowerCase();
+      const targetText = "create a random email";
 
-    const elements = document.querySelectorAll<HTMLElement>("*");
-    for (const el of elements) {
-      const text = normalize(
-        el instanceof HTMLInputElement
-          ? el.value || el.getAttribute("value") || el.textContent || ""
-          : el.textContent || ""
-      );
-      if (!text) continue;
-      if (!text.includes(targetText)) continue;
+      const elements = document.querySelectorAll<HTMLElement>("*");
+      for (const el of elements) {
+        const text = normalize(
+          el instanceof HTMLInputElement
+            ? el.value || el.getAttribute("value") || el.textContent || ""
+            : el.textContent || ""
+        );
+        if (!text) continue;
+        if (!text.includes(targetText)) continue;
 
-      try {
-        el.scrollIntoView({ behavior: "instant", block: "center" });
-      } catch {
-        /* ignore */
+        try {
+          el.scrollIntoView({ behavior: "instant", block: "center" });
+        } catch {
+          /* ignore */
+        }
+        el.click();
+        return true;
       }
-      el.click();
-      return true;
-    }
+      return false;
+    });
 
-    return false;
-  });
+  const maxBtnWaitMs = 5000;
+  const startBtn = Date.now();
+  let clicked = false;
+  while (Date.now() - startBtn < maxBtnWaitMs) {
+    clicked = await tryClick();
+    if (clicked) break;
+  }
 
   if (!clicked) {
     throw new Error('Không tìm thấy nút "Create a Random Email" trên trang.');
@@ -256,13 +264,9 @@ const clickRandomEmailButton = async (page: Page): Promise<void> => {
 
   await navPromise;
 
-  const pollMs = 80;
   const maxWaitMs = 5000;
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-      pollMs
-    );
     try {
       const email = await getEmailFromDisplay(page);
       if (email?.includes("@")) return;
@@ -279,32 +283,37 @@ const clickRandomEmailButton = async (page: Page): Promise<void> => {
 };
 
 const clickNewButton = async (page: Page): Promise<void> => {
-  const clicked = await page.evaluate(() => {
-    const normalize = (value: string) =>
-      value.replace(/\s+/g, " ").trim().toLowerCase();
-    const target = "new";
+  const tryClick = () =>
+    page.evaluate(() => {
+      const normalize = (value: string) =>
+        value.replace(/\s+/g, " ").trim().toLowerCase();
+      const target = "new";
 
-    const elements = document.querySelectorAll<HTMLElement>("*");
-    for (const el of elements) {
-      const text = normalize(el.textContent || "");
-      if (!text) continue;
-      if (text.length > 20) continue;
-      if (!text.includes(target)) continue;
+      const elements = document.querySelectorAll<HTMLElement>("*");
+      for (const el of elements) {
+        const text = normalize(el.textContent || "");
+        if (!text) continue;
+        if (text.length > 20) continue;
+        if (!text.includes(target)) continue;
 
-      try {
-        el.scrollIntoView({ behavior: "instant", block: "center" });
-      } catch {
-        /* ignore scroll errors */
+        try {
+          el.scrollIntoView({ behavior: "instant", block: "center" });
+        } catch {
+          /* ignore scroll errors */
+        }
+        el.click();
+        return true;
       }
-      el.click();
-      return true;
-    }
+      return false;
+    });
 
-    return false;
-  });
-
-  if (!clicked) throw new Error('Không tìm thấy nút "New" trên trang.');
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(80);
+  const maxWaitMs = 5000;
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const clicked = await tryClick();
+    if (clicked) return;
+  }
+  throw new Error('Không tìm thấy nút "New" trên trang.');
 };
 
 const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
@@ -444,9 +453,6 @@ export const createImailEduAddress = async (
   let user = "";
   let domain = "";
 
-  const sleep = (ms: number) =>
-    (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(ms);
-
   const clickRandomAndWait = async (): Promise<boolean> => {
     if (attempts >= maxAttempts) return false;
     attempts += 1;
@@ -471,7 +477,6 @@ export const createImailEduAddress = async (
     if (!currentEmail) {
       if (attempts < maxAttempts) {
         await clickNewButton(page);
-        await sleep(120);
       }
       continue;
     }
@@ -479,7 +484,6 @@ export const createImailEduAddress = async (
     if (!currentEmail.includes(".edu")) {
       if (attempts < maxAttempts) {
         await clickNewButton(page);
-        await sleep(120);
       }
       continue;
     }
@@ -488,7 +492,6 @@ export const createImailEduAddress = async (
 
     while (attempts < maxAttempts && containsExcludedKeyword) {
       await clickNewButton(page);
-      await sleep(150);
 
       const nextClicked = await clickRandomAndWait();
       if (!nextClicked) {
@@ -500,7 +503,6 @@ export const createImailEduAddress = async (
       if (!currentEmail) {
         if (attempts < maxAttempts) {
           await clickNewButton(page);
-          await sleep(120);
         }
         continue outer;
       }
@@ -508,7 +510,6 @@ export const createImailEduAddress = async (
       if (!currentEmail.includes(".edu")) {
         if (attempts < maxAttempts) {
           await clickNewButton(page);
-          await sleep(120);
         }
         continue outer;
       }
@@ -521,7 +522,6 @@ export const createImailEduAddress = async (
     if (!currentEmail.includes(".edu")) {
       if (attempts < maxAttempts) {
         await clickNewButton(page);
-        await sleep(120);
       }
       continue;
     }
