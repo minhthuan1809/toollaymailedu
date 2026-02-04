@@ -23,17 +23,37 @@ export type EtempmailMessage = {
 };
 
 const ETEMPMAIL_URL = "https://etempmail.com/email?id=1";
+
 const DELETE_EMAIL_BUTTON_SELECTOR = "#deleteEmailAddress";
 
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+
+/** Kiểm tra email có chứa bất kỳ chuỗi nào trong other không */
+const emailContainsOther = (email: string, other: string[]): boolean => {
+  if (!other?.length) return false;
+  const lower = email.toLowerCase();
+  return other.some((k) => k && lower.includes(k.toLowerCase()));
+};
+
+const clickDeleteEmailAddress = async (page: Page): Promise<void> => {
+  await page.waitForSelector(DELETE_EMAIL_BUTTON_SELECTOR, { timeout: 5000 });
+  await page.click(DELETE_EMAIL_BUTTON_SELECTOR);
+  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
+    800
+  );
+};
 
 const extractPrimaryEmail = async (page: Page): Promise<string | null> => {
   // Ưu tiên ô input chính giữa trang (địa chỉ email hiện tại), tránh dính email mẫu như test@test.com
   return page.evaluate((regexSource: string) => {
     const regex = new RegExp(regexSource, "i");
 
-    // Các selector ưu tiên cho ô input chứa email hiện tại
+    // Các selector ưu tiên cho ô input / element chứa email hiện tại (etempmail có thể dùng input readonly hoặc #email)
     const candidates: Array<HTMLInputElement | HTMLElement | null> = [
+      document.querySelector("#emailAddress"),
+      document.querySelector("#email"),
+      document.querySelector('input[name="email"]'),
+      document.querySelector('input[readonly]'),
       document.querySelector('input[type="text"]'),
       document.querySelector('input[type="email"]'),
       document.querySelector('input[aria-label*="mail"]'),
@@ -110,7 +130,26 @@ const extractEmailFromPage = async (page: Page): Promise<string | null> => {
   if (primary) return primary;
 
   const candidates = await extractEmailCandidates(page);
-  return candidates.length > 0 ? candidates[0] : null;
+  // Bỏ qua email mẫu/placeholder
+  const skip = new Set(["test@test.com", "example@example.com"]);
+  const valid = candidates.filter((e) => e && !skip.has(e.toLowerCase()));
+  return valid.length > 0 ? valid[0] : null;
+};
+
+/** Trích xuất email, thử lại vài lần với delay (trang có thể chưa render xong hoặc vừa đổi sau khi xóa) */
+const extractEmailFromPageWithRetry = async (
+  page: Page,
+  maxRetries = 6,
+  delayMs = 600
+): Promise<string | null> => {
+  const sleep = (page as unknown as { sleep: (ms: number) => Promise<void> })
+    .sleep;
+  for (let i = 0; i < maxRetries; i++) {
+    const email = await extractEmailFromPage(page);
+    if (email) return email;
+    if (i < maxRetries - 1) await sleep(delayMs);
+  }
+  return null;
 };
 
 const findOpenPageByExactUrl = async (
@@ -178,58 +217,44 @@ export const ensureEtempmailPage = async (
   return { page, pageStatus: "opened" };
 };
 
-const clickDeleteEmailAddress = async (page: Page): Promise<void> => {
-  page.once("dialog", (d: { accept: () => Promise<void> }) => {
-    void d.accept();
-  });
-  await page.waitForSelector(DELETE_EMAIL_BUTTON_SELECTOR, { visible: true });
-
-  await Promise.all([
-    page.click(DELETE_EMAIL_BUTTON_SELECTOR),
-    page
-      .waitForNavigation({ waitUntil: "networkidle0", timeout: 5000 })
-      .catch(() => undefined),
-  ]);
-};
-
 export const getNewEtempmailAddress = async (
-  browserInstance: Browser
+  browserInstance: Browser,
+  other: string[] = []
 ): Promise<EtempmailResult> => {
-  // forceNew = true để luôn tạo cửa sổ mới khi tạo email
   const { page, pageStatus } = await ensureEtempmailPage(browserInstance, true);
 
-  // read current email if present
-  const before = await extractEmailFromPage(page);
+  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
+    1200
+  );
 
-  // click trash button to delete/renew email
-  await clickDeleteEmailAddress(page);
+  let email: string | null = null;
+  const maxAttempts = 20;
 
-  // wait until the page shows an email (prefer different from previous)
-  const waitForEmail = async (
-    prev: string | null,
-    timeoutMs = 15000
-  ): Promise<string | null> => {
-    const deadline = Date.now() + timeoutMs;
-    let lastSeen: string | null = null;
-    while (Date.now() < deadline) {
-      const email = await extractEmailFromPage(page);
-      if (email) {
-        lastSeen = email;
-        if (!prev || email !== prev) return email;
-      }
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        500
-      );
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Retry extraction (trang có thể chưa render hoặc vừa đổi sau khi nhấn xóa)
+    email = await extractEmailFromPageWithRetry(page, 6, 600);
+
+    if (!email) {
+      throw new Error("Could not find email on eTempMail page.");
     }
-    return lastSeen;
-  };
 
-  const email = await waitForEmail(before);
+    // Nếu không cần lọc other, hoặc email không chứa ký tự trùng với other → dùng luôn
+    if (!other.length || !emailContainsOther(email, other)) {
+      break;
+    }
 
-  if (!email) {
-    throw new Error(
-      "Could not find email on eTempMail page after clicking delete."
-    );
+    // Email chứa other → nhấn nút xóa, lấy lại email (tối đa 20 lần)
+    if (attempt < maxAttempts) {
+      await clickDeleteEmailAddress(page);
+    }
+  }
+
+  // Sau 20 lần vẫn trùng other → báo không lấy được
+  if (
+    !email ||
+    (other.length > 0 && emailContainsOther(email, other))
+  ) {
+    throw new Error("không lấy được gmail");
   }
 
   // Phân tách user và domain để đồng bộ cấu trúc res với imailEdu

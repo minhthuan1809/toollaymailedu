@@ -40,7 +40,8 @@ app.post('/api/gmail/new', async (req: Request<unknown, unknown, GmailNewBodyIte
         const browserInstance = await createNewBrowser();
 
         if (first.type === 'etempmail') {
-            const result = await getNewEtempmailAddress(browserInstance);
+            const other = first.other ?? [];
+            const result = await getNewEtempmailAddress(browserInstance, other);
             res.json({ status: 'ok', result });
             return;
         }
