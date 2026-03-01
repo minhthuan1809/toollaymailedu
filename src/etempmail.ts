@@ -1,10 +1,11 @@
-import type { Browser, Page, HTTPResponse } from "puppeteer";
-import { ensureBrowser, ensurePageViewport } from "./openChrome";
+import type { Browser, Page } from "playwright";
+import { ensurePageViewport, getBrowserPages } from "./openChrome";
 import {
   registerEmailBrowser,
   getPageByEmail,
   getBrowserByEmail,
 } from "./emailPageMap";
+import { sleep } from "./pageUtils";
 
 export type EtempmailResult = {
   url: string;
@@ -38,9 +39,7 @@ const emailContainsOther = (email: string, other: string[]): boolean => {
 const clickDeleteEmailAddress = async (page: Page): Promise<void> => {
   await page.waitForSelector(DELETE_EMAIL_BUTTON_SELECTOR, { timeout: 5000 });
   await page.click(DELETE_EMAIL_BUTTON_SELECTOR);
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    800
-  );
+  await sleep(800);
 };
 
 const extractPrimaryEmail = async (page: Page): Promise<string | null> => {
@@ -53,7 +52,7 @@ const extractPrimaryEmail = async (page: Page): Promise<string | null> => {
       document.querySelector("#emailAddress"),
       document.querySelector("#email"),
       document.querySelector('input[name="email"]'),
-      document.querySelector('input[readonly]'),
+      document.querySelector("input[readonly]"),
       document.querySelector('input[type="text"]'),
       document.querySelector('input[type="email"]'),
       document.querySelector('input[aria-label*="mail"]'),
@@ -111,12 +110,12 @@ const extractEmailCandidates = async (page: Page): Promise<string[]> => {
 
     document
       .querySelectorAll(
-        '[id*="mail"],[id*="email"],[class*="mail"],[class*="email"]'
+        '[id*="mail"],[id*="email"],[class*="mail"],[class*="email"]',
       )
       .forEach((el) => {
         addIfEmail(el.textContent ?? "");
         addIfEmail(
-          el && "innerText" in el ? (el as HTMLElement).innerText ?? "" : ""
+          el && "innerText" in el ? ((el as HTMLElement).innerText ?? "") : "",
         );
       });
 
@@ -140,10 +139,8 @@ const extractEmailFromPage = async (page: Page): Promise<string | null> => {
 const extractEmailFromPageWithRetry = async (
   page: Page,
   maxRetries = 6,
-  delayMs = 600
+  delayMs = 600,
 ): Promise<string | null> => {
-  const sleep = (page as unknown as { sleep: (ms: number) => Promise<void> })
-    .sleep;
   for (let i = 0; i < maxRetries; i++) {
     const email = await extractEmailFromPage(page);
     if (email) return email;
@@ -154,9 +151,9 @@ const extractEmailFromPageWithRetry = async (
 
 const findOpenPageByExactUrl = async (
   browserInstance: Browser,
-  targetUrl: string
+  targetUrl: string,
 ): Promise<Page | null> => {
-  const pages = await browserInstance.pages();
+  const pages = await getBrowserPages(browserInstance);
   for (const p of pages) {
     try {
       const url = p.url();
@@ -169,9 +166,9 @@ const findOpenPageByExactUrl = async (
 };
 
 const findAnyOpenPage = async (
-  browserInstance: Browser
+  browserInstance: Browser,
 ): Promise<Page | null> => {
-  const pages = await browserInstance.pages();
+  const pages = await getBrowserPages(browserInstance);
   for (const p of pages) {
     try {
       // truy cập url để chắc chắn page còn sống
@@ -186,7 +183,7 @@ const findAnyOpenPage = async (
 
 export const ensureEtempmailPage = async (
   browserInstance: Browser,
-  forceNew = false
+  forceNew = false,
 ): Promise<{ page: Page; pageStatus: EtempmailResult["pageStatus"] }> => {
   // Nếu forceNew = true, luôn tạo page mới (dùng khi tạo email mới)
   if (forceNew) {
@@ -219,13 +216,11 @@ export const ensureEtempmailPage = async (
 
 export const getNewEtempmailAddress = async (
   browserInstance: Browser,
-  other: string[] = []
+  other: string[] = [],
 ): Promise<EtempmailResult> => {
   const { page, pageStatus } = await ensureEtempmailPage(browserInstance, true);
 
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    1200
-  );
+  await sleep(1200);
 
   let email: string | null = null;
   const maxAttempts = 20;
@@ -250,10 +245,7 @@ export const getNewEtempmailAddress = async (
   }
 
   // Sau 20 lần vẫn trùng other → báo không lấy được
-  if (
-    !email ||
-    (other.length > 0 && emailContainsOther(email, other))
-  ) {
+  if (!email || (other.length > 0 && emailContainsOther(email, other))) {
     throw new Error("không lấy được gmail");
   }
 
@@ -267,7 +259,8 @@ export const getNewEtempmailAddress = async (
   }
 
   // Lưu mapping email -> { page, browser } để có thể đóng cửa sổ sau này
-  const browser = page.browser();
+  const browser = page.context().browser();
+  if (!browser) throw new Error("Browser context unavailable");
   registerEmailBrowser(email, page, browser);
 
   return { url: ETEMPMAIL_URL, pageStatus, domain, user, email };
@@ -277,8 +270,8 @@ const scrapeMessages = async (page: Page): Promise<EtempmailMessage[]> => {
   return page.evaluate(() => {
     const rows = Array.from(
       document.querySelectorAll(
-        '[onclick*="mail"],[onclick*="email"],.list-group-item, tr, .mail-item, .message'
-      )
+        '[onclick*="mail"],[onclick*="email"],.list-group-item, tr, .mail-item, .message',
+      ),
     ).slice(0, 30);
 
     const pickText = (el: Element | null): string | undefined => {
@@ -322,7 +315,7 @@ const scrapeMessages = async (page: Page): Promise<EtempmailMessage[]> => {
 //
 export const readEtempmailInbox = async (
   _browserInstance: Browser,
-  expectedEmail?: string
+  expectedEmail?: string,
 ): Promise<{
   email: string;
   inbox: unknown;
@@ -335,7 +328,7 @@ export const readEtempmailInbox = async (
   // BẮT BUỘC: phải có expectedEmail để tìm đúng browser đã lưu
   if (!expectedEmail || expectedEmail.trim().length === 0) {
     throw new Error(
-      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó."
+      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó.",
     );
   }
 
@@ -347,38 +340,31 @@ export const readEtempmailInbox = async (
 
   if (registeredBrowser && registeredPage) {
     try {
-      // Kiểm tra browser và page còn sống không
-      if (registeredBrowser.isConnected()) {
-        await registeredPage.url();
-        browser = registeredBrowser;
-        page = registeredPage;
-        await page.bringToFront();
-        pageStatus = "already-open";
-      }
+      await registeredPage.url();
+      browser = registeredBrowser;
+      page = registeredPage;
+      await page.bringToFront();
+      pageStatus = "already-open";
     } catch {
-      // Browser hoặc page đã bị đóng
       throw new Error(
-        `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`
+        `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`,
       );
     }
   }
 
   if (!page || !browser) {
     throw new Error(
-      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`
+      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`,
     );
   }
 
   // Wait for page to be fully loaded and inbox to render
-  // Đợi một chút để trang render và có thể đã gọi API getInbox
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    2000
-  );
+  await sleep(2000);
 
   const currentEmail = await extractEmailFromPage(page);
   if (!currentEmail) {
     throw new Error(
-      "Không tìm thấy địa chỉ email hiện tại trên trang eTempMail."
+      "Không tìm thấy địa chỉ email hiện tại trên trang eTempMail.",
     );
   }
 

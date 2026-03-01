@@ -1,10 +1,11 @@
-import type { Browser, Page, HTTPResponse } from "puppeteer";
-import { ensureBrowser } from "./openChrome";
+import type { Browser, Page, Response } from "playwright";
+import { ensurePageViewport, getBrowserPages } from "./openChrome";
 import {
   registerEmailBrowser,
   getPageByEmail,
   getBrowserByEmail,
 } from "./emailPageMap";
+import { sleep } from "./pageUtils";
 
 export type ImailEduResult = {
   url: string;
@@ -31,9 +32,9 @@ const generateRandomUser = (min: number, max: number): string => {
 
 const findOpenPageByExactUrl = async (
   browserInstance: Browser,
-  targetUrl: string
+  targetUrl: string,
 ): Promise<Page | null> => {
-  const pages = await browserInstance.pages();
+  const pages = await getBrowserPages(browserInstance);
   for (const p of pages) {
     try {
       const url = p.url();
@@ -47,9 +48,9 @@ const findOpenPageByExactUrl = async (
 };
 
 const findAnyOpenPage = async (
-  browserInstance: Browser
+  browserInstance: Browser,
 ): Promise<Page | null> => {
-  const pages = await browserInstance.pages();
+  const pages = await getBrowserPages(browserInstance);
   for (const p of pages) {
     try {
       // Try to access url to check if page is still valid
@@ -66,7 +67,7 @@ const clickDomainInput = async (page: Page): Promise<void> => {
   await page.waitForSelector('input[name="domain"]', { timeout: 2000 });
   await page.evaluate(() => {
     const input = document.querySelector(
-      "input[name='domain']"
+      "input[name='domain']",
     ) as HTMLInputElement | null;
     if (!input) throw new Error("❌ Không tìm thấy input domain");
     let parent = input.parentElement;
@@ -79,7 +80,7 @@ const clickDomainInput = async (page: Page): Promise<void> => {
     }
     input.click();
   });
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(20);
+  await sleep(20);
 };
 
 const pickRandomEduDomain = async (page: Page): Promise<string> => {
@@ -91,7 +92,7 @@ const pickRandomEduDomain = async (page: Page): Promise<string> => {
         const s = window.getComputedStyle(d);
         return s.display !== "none" && s.visibility !== "hidden";
       },
-      { timeout: 1000 }
+      { timeout: 1000 },
     )
     .catch(() => Promise.resolve());
 
@@ -127,26 +128,25 @@ const fillUserAndSubmit = async (page: Page): Promise<{ user: string }> => {
   const user = generateRandomUser(15, 20);
 
   await page.waitForSelector(USER_INPUT_SELECTOR, {
-    visible: true,
+    state: "visible",
     timeout: 3000,
   });
   await page.evaluate(
-    (sel, val) => {
+    ({ sel, val }: { sel: string; val: string }) => {
       const el = document.querySelector(sel) as HTMLInputElement | null;
       if (el) {
         el.value = val;
         el.dispatchEvent(new Event("input", { bubbles: true }));
       }
     },
-    USER_INPUT_SELECTOR,
-    user
+    { sel: USER_INPUT_SELECTOR, val: user },
   );
 
   await page.waitForSelector(SUBMIT_INPUT_SELECTOR, {
-    visible: true,
+    state: "visible",
     timeout: 3000,
   });
-  await page.evaluate((sel) => {
+  await page.evaluate((sel: string) => {
     const el = document.querySelector(sel) as HTMLElement | null;
     if (el) el.click();
   }, SUBMIT_INPUT_SELECTOR);
@@ -156,12 +156,11 @@ const fillUserAndSubmit = async (page: Page): Promise<{ user: string }> => {
 
 export const ensureImailEduPage = async (
   browserInstance: Browser,
-  forceNew = false
+  forceNew = false,
 ): Promise<{ page: Page; pageStatus: ImailEduResult["pageStatus"] }> => {
   if (forceNew) {
     const page = await browserInstance.newPage();
-    await page.setViewport({ width: 1200, height: 800 });
-    // domcontentloaded nhanh hơn nhiều so với load+networkidle2
+    await ensurePageViewport(page);
     await page.goto(IMAIL_EDU_URL, {
       waitUntil: "domcontentloaded",
       timeout: 15000,
@@ -172,37 +171,25 @@ export const ensureImailEduPage = async (
   const existing = await findOpenPageByExactUrl(browserInstance, IMAIL_EDU_URL);
   if (existing) {
     await existing.bringToFront();
-    await (
-      existing as unknown as {
-        navigate: (url: string, delay?: number) => Promise<void>;
-      }
-    ).navigate(IMAIL_EDU_URL, 0);
+    await existing.goto(IMAIL_EDU_URL, { waitUntil: "domcontentloaded" });
     return { page: existing, pageStatus: "already-open" };
   }
 
   const anyOpen = await findAnyOpenPage(browserInstance);
   if (anyOpen) {
     await anyOpen.bringToFront();
-    await (
-      anyOpen as unknown as {
-        navigate: (url: string, delay?: number) => Promise<void>;
-      }
-    ).navigate(IMAIL_EDU_URL, 0);
+    await anyOpen.goto(IMAIL_EDU_URL, { waitUntil: "domcontentloaded" });
     return { page: anyOpen, pageStatus: "already-open" };
   }
 
   const page = await browserInstance.newPage();
-  await page.setViewport({ width: 1200, height: 800 });
-  await (
-    page as unknown as {
-      navigate: (url: string, delay?: number) => Promise<void>;
-    }
-  ).navigate(IMAIL_EDU_URL, 0);
+  await ensurePageViewport(page);
+  await page.goto(IMAIL_EDU_URL, { waitUntil: "domcontentloaded" });
   return { page, pageStatus: "opened" };
 };
 
 export const openImailEduDomainPicker = async (
-  browserInstance: Browser
+  browserInstance: Browser,
 ): Promise<ImailEduResult> => {
   const { page, pageStatus } = await ensureImailEduPage(browserInstance);
 
@@ -234,7 +221,7 @@ const clickRandomEmailButton = async (page: Page): Promise<void> => {
         const text = normalize(
           el instanceof HTMLInputElement
             ? el.value || el.getAttribute("value") || el.textContent || ""
-            : el.textContent || ""
+            : el.textContent || "",
         );
         if (!text) continue;
         if (!text.includes(targetText)) continue;
@@ -321,7 +308,7 @@ const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
     const email = await page.evaluate(() => {
       // Tìm div có class chứa các class bạn cung cấp: block appearance-none w-full bg-white text-white py-4 px-5 pr-8 bg-opacity-10 rounded-md cursor-pointer focus:outline-none select-none
       const divs = Array.from(
-        document.querySelectorAll("div")
+        document.querySelectorAll("div"),
       ) as HTMLElement[];
       const emailDiv = divs.find((div) => {
         const classList = Array.from(div.classList);
@@ -354,7 +341,7 @@ const getEmailFromDisplay = async (page: Page): Promise<string | null> => {
 
       // Fallback 1: tìm trong input có value chứa email
       const inputs = Array.from(
-        document.querySelectorAll("input")
+        document.querySelectorAll("input"),
       ) as HTMLInputElement[];
       for (const input of inputs) {
         const value = input.value?.trim() || "";
@@ -443,7 +430,7 @@ const getCurrentDomain = async (page: Page): Promise<string | null> => {
 
 export const createImailEduAddress = async (
   browserInstance: Browser,
-  excludeKeywords: string[] = []
+  excludeKeywords: string[] = [],
 ): Promise<ImailEduResult> => {
   const { page, pageStatus } = await ensureImailEduPage(browserInstance, true);
 
@@ -464,7 +451,7 @@ export const createImailEduAddress = async (
     if (!value) return false;
     const lower = value.toLowerCase();
     return excludeKeywords.some((keyword) =>
-      lower.includes(keyword.toLowerCase())
+      lower.includes(keyword.toLowerCase()),
     );
   };
 
@@ -551,12 +538,12 @@ export const createImailEduAddress = async (
     throw new Error(
       `Không thể tạo email có .edu sau ${attempts} lần thử. Email cuối cùng: ${
         email || "không tìm thấy"
-      }`
+      }`,
     );
   }
 
-  // Lưu mapping email -> { page, browser } để có thể đóng cửa sổ sau này
-  const browser = page.browser();
+  const browser = page.context().browser();
+  if (!browser) throw new Error("Browser context unavailable");
   registerEmailBrowser(email, page, browser);
 
   return {
@@ -570,7 +557,7 @@ export const createImailEduAddress = async (
 
 export const readImailEduInbox = async (
   _browserInstance: Browser,
-  expectedEmail?: string
+  expectedEmail?: string,
 ): Promise<{
   email: string;
   inbox: unknown;
@@ -583,7 +570,7 @@ export const readImailEduInbox = async (
   // BẮT BUỘC: phải có expectedEmail để tìm đúng browser đã lưu
   if (!expectedEmail || expectedEmail.trim().length === 0) {
     throw new Error(
-      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó."
+      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó.",
     );
   }
 
@@ -595,25 +582,21 @@ export const readImailEduInbox = async (
 
   if (registeredBrowser && registeredPage) {
     try {
-      // Kiểm tra browser và page còn sống không
-      if (registeredBrowser.isConnected()) {
-        await registeredPage.url();
-        browser = registeredBrowser;
-        page = registeredPage;
-        await page.bringToFront();
-        currentEmail = emailTrimmed;
-      }
+      await registeredPage.url();
+      browser = registeredBrowser;
+      page = registeredPage;
+      await page.bringToFront();
+      currentEmail = emailTrimmed;
     } catch {
-      // Browser hoặc page đã bị đóng
       throw new Error(
-        `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`
+        `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`,
       );
     }
   }
 
   if (!page || !browser) {
     throw new Error(
-      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`
+      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`,
     );
   }
 
@@ -624,7 +607,7 @@ export const readImailEduInbox = async (
   // 1) Thu thập TẤT CẢ response livewire/message, rồi chọn cái có serverMemo.data.messages
   //    (tránh bắt nhầm response delta chỉ có checksum, không có data)
   const responsePromises: Promise<unknown>[] = [];
-  const onResponse = (res: HTTPResponse) => {
+  const onResponse = (res: Response) => {
     const url = res.url();
     if (
       !url.includes("livewire/message/frontend.app") &&
@@ -643,13 +626,11 @@ export const readImailEduInbox = async (
     await page.reload({ waitUntil: "domcontentloaded" }).catch(() => undefined);
   }
 
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    600
-  );
+  await sleep(600);
 
   await page.evaluate(() => {
     const btn = Array.from(
-      document.querySelectorAll("button, div[x-on\\:click]")
+      document.querySelectorAll("button, div[x-on\\:click]"),
     ).find((b) => {
       const t = (b.textContent || "").toLowerCase();
       const on =
@@ -671,16 +652,14 @@ export const readImailEduInbox = async (
     }
   });
 
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    4500
-  );
+  await sleep(4500);
 
   page.off("response", onResponse);
 
   const settled = await Promise.allSettled(responsePromises);
   const candidates = settled
     .filter(
-      (r): r is PromiseFulfilledResult<unknown> => r.status === "fulfilled"
+      (r): r is PromiseFulfilledResult<unknown> => r.status === "fulfilled",
     )
     .map((r) => r.value)
     .filter((v) => v != null);
@@ -697,7 +676,7 @@ export const readImailEduInbox = async (
   if (!inboxData) {
     const withData = candidates.find(
       (j) =>
-        (j as { serverMemo?: { data?: unknown } })?.serverMemo?.data != null
+        (j as { serverMemo?: { data?: unknown } })?.serverMemo?.data != null,
     );
     if (withData) inboxData = withData;
   }
@@ -711,7 +690,7 @@ export const readImailEduInbox = async (
       currentEmail = expectedEmail.trim();
     } else {
       throw new Error(
-        "Không tìm thấy địa chỉ email hiện tại trên trang imailEdu."
+        "Không tìm thấy địa chỉ email hiện tại trên trang imailEdu.",
       );
     }
   }
@@ -726,24 +705,22 @@ export const readImailEduInbox = async (
     try {
       const responsePromise = page
         .waitForResponse(
-          (res: HTTPResponse) => {
+          (res: Response) => {
             const url = res.url();
             return (
               url.includes("livewire/message/frontend.app") ||
               url.includes("livewire/message")
             );
           },
-          { timeout: 8000 }
+          { timeout: 8000 },
         )
         .catch(() => null);
 
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        80
-      );
+      await sleep(80);
 
       await page.evaluate(() => {
         const buttons = Array.from(
-          document.querySelectorAll("button, div[x-on\\:click], div[onclick]")
+          document.querySelectorAll("button, div[x-on\\:click], div[onclick]"),
         ) as HTMLElement[];
         const refreshBtn = buttons.find((btn) => {
           const text = btn.textContent?.toLowerCase() || "";
@@ -770,9 +747,7 @@ export const readImailEduInbox = async (
         }
       });
 
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        500
-      );
+      await sleep(500);
 
       const response = await responsePromise;
       if (response) {
@@ -855,32 +830,28 @@ export const readImailEduInbox = async (
       // Setup response listener TRƯỚC khi trigger action
       const responsePromise = page
         .waitForResponse(
-          (res: HTTPResponse) => {
+          (res: Response) => {
             const url = res.url();
             return (
               url.includes("livewire/message/frontend.app") ||
               url.startsWith(targetUrl)
             );
           },
-          { timeout: 6000 }
+          { timeout: 6000 },
         )
         .catch(() => null);
 
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        50
-      );
+      await sleep(50);
 
       await page.evaluate(() => {
         const refreshBtn = document.querySelector(
-          '[onclick*="refresh"], [aria-label*="refresh" i]'
+          '[onclick*="refresh"], [aria-label*="refresh" i]',
         ) as HTMLElement | null;
         if (refreshBtn) refreshBtn.click();
         else window.dispatchEvent(new Event("scroll"));
       });
 
-      await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-        400
-      );
+      await sleep(400);
 
       const response = await responsePromise;
 
@@ -904,7 +875,7 @@ export const readImailEduInbox = async (
   // DEBUG: log toàn bộ response ra console
   console.log(
     "[imailEdu] RAW Livewire response:",
-    JSON.stringify(inboxData, null, 2)
+    JSON.stringify(inboxData, null, 2),
   );
 
   // Fallback: không bắt được response thì trả empty
@@ -918,7 +889,7 @@ export const readImailEduInbox = async (
   }
 
   const pageStatus: ImailEduResult["pageStatus"] = currentUrl.includes(
-    "imail.edu.vn"
+    "imail.edu.vn",
   )
     ? "already-open"
     : "opened";

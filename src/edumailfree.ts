@@ -1,10 +1,11 @@
-import type { Browser, Page } from "puppeteer";
+import type { Browser, Page } from "playwright";
 import { ensurePageViewport } from "./openChrome";
 import {
   registerEmailBrowser,
   getPageByEmail,
   getBrowserByEmail,
 } from "./emailPageMap";
+import { sleep } from "./pageUtils";
 
 export type EdumailfreeResult = {
   url: string;
@@ -25,7 +26,10 @@ const SUBMIT_CREATE_RANDOM_SELECTOR =
   'input[type="submit"][value="Create a Random Email"]';
 
 /** Chữ trên nút (fallback tìm theo text) */
-const CREATE_RANDOM_EMAIL_TEXTS = ["Create a Random Email", "Tạo Email Ngẫu nhiên"];
+const CREATE_RANDOM_EMAIL_TEXTS = [
+  "Create a Random Email",
+  "Tạo Email Ngẫu nhiên",
+];
 
 /** Nút "New" (div chứa chữ New, x-on:click="in_app = true") — bấm khi cần đổi email vì trùng other */
 const clickNewButton = async (page: Page): Promise<void> => {
@@ -33,7 +37,11 @@ const clickNewButton = async (page: Page): Promise<void> => {
     // Tìm div có text "New" (nút New để tạo email mới)
     const all = document.querySelectorAll("div, button, a, [role='button']");
     for (const el of all) {
-      const text = ((el as HTMLElement).innerText ?? (el as HTMLElement).textContent ?? "").trim();
+      const text = (
+        (el as HTMLElement).innerText ??
+        (el as HTMLElement).textContent ??
+        ""
+      ).trim();
       if (text === "New") {
         (el as HTMLElement).click();
         return true;
@@ -61,23 +69,33 @@ const waitForCreateRandomButton = async (page: Page): Promise<void> => {
 /** Bấm nút tạo email: ưu tiên selector input[submit], không thấy thì tìm theo chữ */
 const clickCreateRandomEmail = async (page: Page): Promise<void> => {
   try {
-    await page.waitForSelector(SUBMIT_CREATE_RANDOM_SELECTOR, { timeout: 3000 });
+    await page.waitForSelector(SUBMIT_CREATE_RANDOM_SELECTOR, {
+      timeout: 3000,
+    });
     await page.click(SUBMIT_CREATE_RANDOM_SELECTOR);
     return;
   } catch {
     // Fallback: tìm theo nội dung chữ
   }
   const found = await page.evaluate((texts: string[]) => {
-    const inputs = document.querySelectorAll<HTMLInputElement>('input[type="submit"]');
+    const inputs = document.querySelectorAll<HTMLInputElement>(
+      'input[type="submit"]',
+    );
     for (const el of inputs) {
-      if (el.value && texts.some((label) => el.value.trim() === label || el.value.includes(label))) {
+      if (
+        el.value &&
+        texts.some(
+          (label) => el.value.trim() === label || el.value.includes(label),
+        )
+      ) {
         el.click();
         return true;
       }
     }
     const all = document.querySelectorAll("button, a, [role='button']");
     for (const el of all) {
-      const raw = (el as HTMLElement).innerText ?? (el as HTMLElement).textContent ?? "";
+      const raw =
+        (el as HTMLElement).innerText ?? (el as HTMLElement).textContent ?? "";
       const text = raw.trim();
       for (const label of texts) {
         if (text === label || text.includes(label)) {
@@ -99,8 +117,10 @@ const extractEmailFromPage = async (page: Page): Promise<string | null> => {
     // edumailfree.com hiển thị email trong div#email_id sau khi bấm "Tạo Email Ngẫu nhiên"
     const emailIdEl = document.querySelector("#email_id");
     if (emailIdEl) {
-      const raw = (emailIdEl as HTMLElement).innerText ?? emailIdEl.textContent ?? "";
-      const match = typeof raw === "string" && raw.trim() ? raw.match(regex) : null;
+      const raw =
+        (emailIdEl as HTMLElement).innerText ?? emailIdEl.textContent ?? "";
+      const match =
+        typeof raw === "string" && raw.trim() ? raw.match(regex) : null;
       if (match && match[0]) return match[0];
     }
     const candidates: Array<HTMLInputElement | HTMLElement | null> = [
@@ -133,9 +153,8 @@ const extractEmailFromPage = async (page: Page): Promise<string | null> => {
 const extractEmailFromPageWithRetry = async (
   page: Page,
   maxRetries = 5,
-  delayMs = 600
+  delayMs = 600,
 ): Promise<string | null> => {
-  const sleep = (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep;
   for (let i = 0; i < maxRetries; i++) {
     const email = await extractEmailFromPage(page);
     if (email) return email;
@@ -146,15 +165,13 @@ const extractEmailFromPageWithRetry = async (
 
 export const getNewEdumailfreeAddress = async (
   browserInstance: Browser,
-  other: string[] = []
+  other: string[] = [],
 ): Promise<EdumailfreeResult> => {
   const page = await browserInstance.newPage();
   await ensurePageViewport(page);
   await page.goto(EDUMAILFREE_URL, { waitUntil: "domcontentloaded" });
 
-  await (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(
-    1500
-  );
+  await sleep(1500);
 
   // Chờ form Livewire render, nút input[type=submit][value="Create a Random Email"] xuất hiện
   await waitForCreateRandomButton(page);
@@ -162,24 +179,19 @@ export const getNewEdumailfreeAddress = async (
   let email: string | null = null;
   const maxAttempts = 20;
 
-  const sleep = (page: Page, ms: number) =>
-    (page as unknown as { sleep: (ms: number) => Promise<void> }).sleep(ms);
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Nếu đang retry (email trước chứa other): bấm nút "New" trước, rồi mới bấm Create a Random Email
     if (attempt > 1) {
       await clickNewButton(page);
-      await sleep(page, 1000);
+      await sleep(1000);
     }
 
-    const navPromise = page
-      .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 })
-      .catch(() => null);
     await clickCreateRandomEmail(page);
-    await navPromise;
+    await page
+      .waitForLoadState("domcontentloaded", { timeout: 15000 })
+      .catch(() => null);
 
     await page.waitForSelector("#email_id", { timeout: 10000 });
-    await sleep(page, 600);
+    await sleep(600);
 
     email = await extractEmailFromPageWithRetry(page, 5, 500);
 
@@ -206,7 +218,8 @@ export const getNewEdumailfreeAddress = async (
     domain = parts[1];
   }
 
-  const browser = page.browser();
+  const browser = page.context().browser();
+  if (!browser) throw new Error("Browser context unavailable");
   registerEmailBrowser(email, page, browser);
 
   return {
@@ -221,7 +234,7 @@ export const getNewEdumailfreeAddress = async (
 /** Đọc inbox edumailfree: mở mailbox và bắt response từ livewire/update (fetchMessages) */
 export const readEdumailfreeInbox = async (
   _browserInstance: Browser,
-  expectedEmail?: string
+  expectedEmail?: string,
 ): Promise<{
   email: string;
   inbox: unknown;
@@ -229,7 +242,7 @@ export const readEdumailfreeInbox = async (
 }> => {
   if (!expectedEmail || expectedEmail.trim().length === 0) {
     throw new Error(
-      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó."
+      "Email là bắt buộc để đọc inbox. Vui lòng cung cấp email đã được tạo trước đó.",
     );
   }
 
@@ -239,16 +252,15 @@ export const readEdumailfreeInbox = async (
 
   if (!registeredBrowser || !registeredPage) {
     throw new Error(
-      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`
+      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Email này chưa được tạo hoặc cửa sổ đã bị đóng.`,
     );
   }
 
   try {
-    if (!registeredBrowser.isConnected()) throw new Error("Browser đã đóng");
     await registeredPage.url();
   } catch {
     throw new Error(
-      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`
+      `Không tìm thấy cửa sổ Chrome cho email: ${emailTrimmed}. Có thể cửa sổ đã bị đóng.`,
     );
   }
 
@@ -262,12 +274,12 @@ export const readEdumailfreeInbox = async (
       reject(new Error("Timeout: không nhận được response từ livewire/update"));
     }, 20000);
 
-    const onResponse = async (res: import("puppeteer").HTTPResponse) => {
+    const onResponse = async (res: import("playwright").Response) => {
       const url = res.url();
       if (!url.includes("livewire/update")) return;
       const req = res.request();
       if (req.method() !== "POST") return;
-      const postData = req.postData() ?? "";
+      const postData = (await req.postData()) ?? "";
       if (!postData.includes("fetchMessages")) return;
       try {
         clearTimeout(timeout);
@@ -293,34 +305,60 @@ export const readEdumailfreeInbox = async (
     // Fallback: gọi livewire/update từ page context (cùng cookie/session)
     const updateUrl = LIVEWIRE_UPDATE_URL;
     inbox = await page
-      .evaluate(
-        async (url: string) => {
-          const tokenEl = document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null;
-          const _token = tokenEl?.content ?? "";
-          const payload = {
-            _token,
-            components: [
-              {
-                snapshot: JSON.stringify({
-                  data: { messages: [], deleted: [], error: "", email: "", initial: true, overflow: false },
-                  memo: { id: "", name: "frontend.app", path: "mailbox", method: "GET", children: [], scripts: [], assets: [], errors: [], locale: "en" },
-                  checksum: "",
-                }),
-                updates: {},
-                calls: [{ path: "", method: "__dispatch", params: ["fetchMessages", {}] }],
-              },
-            ],
-          };
-          const response = await fetch(url, {
-            method: "POST",
-            credentials: "include",
-            headers: { Accept: "*/*", "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-            body: JSON.stringify(payload),
-          });
-          return response.json();
-        },
-        updateUrl
-      )
+      .evaluate(async (url: string) => {
+        const tokenEl = document.querySelector(
+          'meta[name="csrf-token"]',
+        ) as HTMLMetaElement | null;
+        const _token = tokenEl?.content ?? "";
+        const payload = {
+          _token,
+          components: [
+            {
+              snapshot: JSON.stringify({
+                data: {
+                  messages: [],
+                  deleted: [],
+                  error: "",
+                  email: "",
+                  initial: true,
+                  overflow: false,
+                },
+                memo: {
+                  id: "",
+                  name: "frontend.app",
+                  path: "mailbox",
+                  method: "GET",
+                  children: [],
+                  scripts: [],
+                  assets: [],
+                  errors: [],
+                  locale: "en",
+                },
+                checksum: "",
+              }),
+              updates: {},
+              calls: [
+                {
+                  path: "",
+                  method: "__dispatch",
+                  params: ["fetchMessages", {}],
+                },
+              ],
+            },
+          ],
+        };
+        const response = await fetch(url, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Accept: "*/*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify(payload),
+        });
+        return response.json();
+      }, updateUrl)
       .catch(() => ({}));
   }
 

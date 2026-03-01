@@ -1,100 +1,93 @@
-import type { Browser, Page } from 'puppeteer';
-import puppeteer from 'puppeteer';
-
-// `src/undetected-browser` là CommonJS JS module, không có type declarations sẵn.
-// Mình dùng kiểu tối thiểu để tránh `any`.
-type UndetectableBrowserInstance = {
-    getBrowser: () => Promise<Browser>;
-    extendPage: (page: Page) => Page;
-};
-
-const UndetectableBrowser = require('./undetected-browser') as unknown as {
-    new(browser: Browser | Promise<Browser>): UndetectableBrowserInstance;
-};
+import type { Browser, Page } from "playwright";
+import { chromium } from "playwright";
 
 export type EnsureBrowserOptions = {
-    headless?: boolean;
+  headless?: boolean;
+};
+
+const isHeadlessEnv = (): boolean =>
+  process.env.HEADLESS === "true" || process.env.HEADLESS === "1";
+
+/** Mặc định true để dùng Chrome Headless Shell (sau `npx playwright install chromium`). Set HEADLESS=false nếu cần mở cửa sổ và đã cài full Chromium. */
+const defaultHeadless = true;
+
+const resolveHeadless = (options: EnsureBrowserOptions): boolean => {
+  if (options.headless !== undefined) return options.headless;
+  if (process.env.HEADLESS !== undefined && process.env.HEADLESS !== "") return isHeadlessEnv();
+  return defaultHeadless;
 };
 
 let browser: Browser | null = null;
-let undetected: UndetectableBrowserInstance | null = null;
+
+function launchArgs(): string[] {
+  const width = 1200;
+  const height = 800;
+  const args = [`--window-size=${width},${height}`];
+  if (process.platform !== "win32") {
+    args.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
+  return args;
+}
 
 export const ensureBrowser = async (
-    options: EnsureBrowserOptions = {}
+  options: EnsureBrowserOptions = {}
 ): Promise<Browser> => {
-    if (browser && browser.isConnected()) {
-        return browser;
+  if (browser) {
+    try {
+      await browser.contexts();
+      return browser;
+    } catch {
+      browser = null;
     }
-
-    const width = 1200;
-    const height = 800;
-
-    // Thêm flags cho Linux để tránh sandbox issues
-    const args = [`--window-size=${width},${height}`];
-    if (process.platform !== 'win32') {
-        args.push('--no-sandbox', '--disable-setuid-sandbox');
-    }
-
-    browser = await puppeteer.launch({
-        headless: options.headless ?? false,
-        args,
-        defaultViewport: { width, height }
-    });
-
-    undetected = new UndetectableBrowser(browser);
-    await undetected.getBrowser();
-
-    // Extend các page đang mở (và các page mới sẽ được hook qua targetcreated)
-    const pages = await browser.pages();
-    pages.forEach((p: Page) => undetected?.extendPage(p));
-
-    return browser;
+  }
+  const headless = resolveHeadless(options);
+  browser = await chromium.launch({
+    headless,
+    args: launchArgs(),
+  });
+  return browser;
 };
 
-export const ensurePageViewport = async (page: Page): Promise<void> => {
-    const desiredWidth = 1200;
-    const desiredHeight = 800;
-    const viewport = page.viewport();
+/** Playwright không có browser.isConnected(); kiểm tra bằng cách dùng contexts. */
+export async function isBrowserConnected(b: Browser): Promise<boolean> {
+  try {
+    await b.contexts();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-    if (!viewport || viewport.width !== desiredWidth || viewport.height !== desiredHeight) {
-        await page.setViewport({ width: desiredWidth, height: desiredHeight });
-    }
+export const ensurePageViewport = async (page: Page): Promise<void> => {
+  const desiredWidth = 1200;
+  const desiredHeight = 800;
+  await page.setViewportSize({ width: desiredWidth, height: desiredHeight });
 };
 
 export const closeBrowser = async (): Promise<void> => {
-    if (!browser) return;
-    await browser.close();
-    browser = null;
-    undetected = null;
+  if (!browser) return;
+  await browser.close();
+  browser = null;
 };
 
 export const getBrowserIfAny = (): Browser | null => browser;
 
-// Tạo browser instance mới (mở cửa sổ Chrome mới)
+/** Trả về tất cả page trong mọi context của browser (Playwright dùng context.pages()). */
+export async function getBrowserPages(b: Browser): Promise<Page[]> {
+  const pages: Page[] = [];
+  for (const ctx of b.contexts()) {
+    pages.push(...ctx.pages());
+  }
+  return pages;
+}
+
 export const createNewBrowser = async (
-    options: EnsureBrowserOptions = {}
+  options: EnsureBrowserOptions = {}
 ): Promise<Browser> => {
-    const width = 1200;
-    const height = 800;
-
-    // Thêm flags cho Linux để tránh sandbox issues
-    const args = [`--window-size=${width},${height}`];
-    if (process.platform !== 'win32') {
-        args.push('--no-sandbox', '--disable-setuid-sandbox');
-    }
-
-    const newBrowser = await puppeteer.launch({
-        headless: options.headless ?? false,
-        args,
-        defaultViewport: { width, height }
-    });
-
-    const newUndetected = new UndetectableBrowser(newBrowser);
-    await newUndetected.getBrowser();
-
-    // Extend các page đang mở
-    const pages = await newBrowser.pages();
-    pages.forEach((p: Page) => newUndetected?.extendPage(p));
-
-    return newBrowser;
+  const headless = resolveHeadless(options);
+  const newBrowser = await chromium.launch({
+    headless,
+    args: launchArgs(),
+  });
+  return newBrowser;
 };
