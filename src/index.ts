@@ -16,7 +16,7 @@ type GmailReadBodyItem = {
   type?: "etempmail" | "imailedu" | "edumailfree";
 };
 
-const PORT = Number(process.env.PORT ?? 5678);
+const PORT = Number(process.env.PORT ?? 2003);
 
 const app = express();
 

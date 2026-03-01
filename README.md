@@ -1,6 +1,6 @@
 # API Documentation
 
-Base URL: `http://localhost:5678` (hoặc port được cấu hình trong biến môi trường `PORT`)
+Base URL: `http://localhost:2003` (hoặc port được cấu hình trong biến môi trường `PORT`)
 
 ---
 
@@ -13,7 +13,7 @@ Kiểm tra server có đang chạy không.
 **JavaScript Example:**
 ```javascript
 async function checkHealth() {
-    const response = await fetch('http://localhost:5678/health');
+    const response = await fetch('http://localhost:2003/health');
     const data = await response.json();
     console.log(data);
     // Output: { status: 'ok' }
@@ -45,7 +45,7 @@ Tạo một email tạm mới (etempmail hoặc imailedu).
 ### Tạo Email Etempmail
 ```javascript
 async function createEtempmail() {
-    const response = await fetch('http://localhost:5678/api/gmail/new', {
+    const response = await fetch('http://localhost:2003/api/gmail/new', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -70,7 +70,7 @@ createEtempmail();
 ### Tạo Email ImailEdu
 ```javascript
 async function createImailEdu() {
-    const response = await fetch('http://localhost:5678/api/gmail/new', {
+    const response = await fetch('http://localhost:2003/api/gmail/new', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -93,7 +93,7 @@ createImailEdu();
 ### Tạo Email ImailEdu Với Loại Bỏ Từ Khóa
 ```javascript
 async function createImailEduWithExclude() {
-    const response = await fetch('http://localhost:5678/api/gmail/new', {
+    const response = await fetch('http://localhost:2003/api/gmail/new', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -159,7 +159,7 @@ createImailEduWithExclude();
 ### Đọc Inbox Etempmail
 ```javascript
 async function readEtempmailInbox(email) {
-    const response = await fetch('http://localhost:5678/api/gmail/read', {
+    const response = await fetch('http://localhost:2003/api/gmail/read', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -185,7 +185,7 @@ readEtempmailInbox(email);
 ### Đọc Inbox ImailEdu
 ```javascript
 async function readImailEduInbox(email) {
-    const response = await fetch('http://localhost:5678/api/gmail/read', {
+    const response = await fetch('http://localhost:2003/api/gmail/read', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -247,7 +247,7 @@ async function closeEmail(email) {
     // Encode email để tránh lỗi với ký tự đặc biệt như @
     const encodedEmail = encodeURIComponent(email);
     
-    const response = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+    const response = await fetch(`http://localhost:2003/api/gmail/close/${encodedEmail}`, {
         method: 'GET'
     });
     
@@ -266,7 +266,7 @@ closeEmail(email);
 async function closeEmailPost(email) {
     const encodedEmail = encodeURIComponent(email);
     
-    const response = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+    const response = await fetch(`http://localhost:2003/api/gmail/close/${encodedEmail}`, {
         method: 'POST'
     });
     
@@ -306,7 +306,7 @@ async function fullExample() {
     try {
         // 1. Tạo email mới
         console.log('Bước 1: Tạo email mới...');
-        const createResponse = await fetch('http://localhost:5678/api/gmail/new', {
+        const createResponse = await fetch('http://localhost:2003/api/gmail/new', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{ type: 'imailedu' }])
@@ -324,7 +324,7 @@ async function fullExample() {
         console.log('Bước 2: Đợi 3 giây rồi đọc inbox...');
         await new Promise(resolve => setTimeout(resolve, 3000));
         
-        const readResponse = await fetch('http://localhost:5678/api/gmail/read', {
+        const readResponse = await fetch('http://localhost:2003/api/gmail/read', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{ type: 'imailedu', email: email }])
@@ -338,7 +338,7 @@ async function fullExample() {
         // 3. Đóng browser của email
         console.log('Bước 3: Đóng browser...');
         const encodedEmail = encodeURIComponent(email);
-        const closeResponse = await fetch(`http://localhost:5678/api/gmail/close/${encodedEmail}`, {
+        const closeResponse = await fetch(`http://localhost:2003/api/gmail/close/${encodedEmail}`, {
             method: 'GET'
         });
         const closeData = await closeResponse.json();
@@ -359,7 +359,7 @@ fullExample();
 ```javascript
 async function callAPIWithErrorHandling() {
     try {
-        const response = await fetch('http://localhost:5678/api/gmail/new', {
+        const response = await fetch('http://localhost:2003/api/gmail/new', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{ type: 'imailedu' }])
