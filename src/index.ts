@@ -238,6 +238,31 @@ const start = (): void => {
     console.log(`API server listening on port ${PORT}`);
   });
 
+  // Tự động đóng tất cả cửa sổ browser lúc 12:00 mỗi ngày
+  let lastAutoCloseDate: string | null = null;
+  setInterval(() => {
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+
+    if (hours === 12 && minutes === 0) {
+      const todayKey = now.toISOString().slice(0, 10); // YYYY-MM-DD
+      if (lastAutoCloseDate !== todayKey) {
+        lastAutoCloseDate = todayKey;
+        void (async () => {
+          try {
+            const closedCount = await closeAllBrowsers();
+            console.log(
+              `[AUTO-CLOSE] ${todayKey} 12:00 - Đã đóng ${closedCount} cửa sổ browser`,
+            );
+          } catch (error) {
+            console.error("[AUTO-CLOSE] Lỗi khi đóng tất cả browsers:", error);
+          }
+        })();
+      }
+    }
+  }, 60 * 1000); // kiểm tra mỗi phút
+
   const shutdown = async (): Promise<void> => {
     server.close();
     await closeBrowser();
