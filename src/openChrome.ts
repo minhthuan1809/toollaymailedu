@@ -18,8 +18,9 @@ export type EnsureBrowserOptions = {
 
 let browser: Browser | null = null;
 let undetected: UndetectableBrowserInstance | null = null;
+let browserLaunchPromise: Promise<Browser> | null = null;
 
-export const ensureBrowser = async (
+const launchBrowser = async (
     options: EnsureBrowserOptions = {}
 ): Promise<Browser> => {
     if (browser && browser.isConnected()) {
@@ -37,7 +38,7 @@ export const ensureBrowser = async (
 
     browser = await puppeteer.launch({
         headless: options.headless ?? false,
-        args,
+        args: [...args, '--disable-background-networking', '--disable-component-update'],
         defaultViewport: { width, height }
     });
 
@@ -49,6 +50,18 @@ export const ensureBrowser = async (
     pages.forEach((p: Page) => undetected?.extendPage(p));
 
     return browser;
+};
+
+export const ensureBrowser = async (
+    options: EnsureBrowserOptions = {}
+): Promise<Browser> => {
+    if (browser && browser.isConnected()) return browser;
+    if (!browserLaunchPromise) browserLaunchPromise = launchBrowser(options);
+    try {
+        return await browserLaunchPromise;
+    } finally {
+        browserLaunchPromise = null;
+    }
 };
 
 export const ensurePageViewport = async (page: Page): Promise<void> => {
@@ -66,6 +79,7 @@ export const closeBrowser = async (): Promise<void> => {
     await browser.close();
     browser = null;
     undetected = null;
+    browserLaunchPromise = null;
 };
 
 export const getBrowserIfAny = (): Browser | null => browser;

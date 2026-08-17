@@ -27,10 +27,9 @@ export const closeBrowserByEmail = async (email: string): Promise<boolean> => {
     }
 
     try {
-        // Kiểm tra browser còn sống không
-        if (info.browser.isConnected()) {
-            // Đóng cả browser (sẽ đóng tất cả pages trong browser đó)
-            await info.browser.close();
+        // Các email dùng chung một Chrome; chỉ đóng tab thuộc email này.
+        if (!info.page.isClosed()) {
+            await info.page.close();
         }
         emailBrowserMap.delete(email.toLowerCase().trim());
         return true;
@@ -47,14 +46,14 @@ export const getAllRegisteredEmails = (): string[] => {
 
 export const closeAllBrowsers = async (): Promise<number> => {
     let closedCount = 0;
-    const browsersToClose: Browser[] = [];
+    const browsersToClose = new Set<Browser>();
     const emailsToRemove: string[] = [];
 
     // Thu thập tất cả browsers cần đóng
     for (const [email, info] of emailBrowserMap.entries()) {
         try {
             if (info.browser.isConnected()) {
-                browsersToClose.push(info.browser);
+                browsersToClose.add(info.browser);
             }
             emailsToRemove.push(email);
         } catch {
